@@ -15,7 +15,7 @@ class DKMSBuildTests(unittest.TestCase):
         from scripts.install import MODULE_FILES, PROJECT, package_identity
 
         self.assertNotEqual(os.geteuid(), 0, "run the isolated build test without sudo")
-        kernel = os.uname().release
+        kernel = os.environ.get("K10TEMP_VIRT_TEST_KERNEL", os.uname().release)
         headers = Path("/lib/modules") / kernel / "build"
         name, version = package_identity((PROJECT / "dkms.conf").read_text())
         with tempfile.TemporaryDirectory(prefix="ktv-dkms-") as directory:
@@ -46,9 +46,9 @@ class DKMSBuildTests(unittest.TestCase):
             modules = list((root / "dkms" / name / version / kernel)
                            .glob("*/module/k10temp_virt.ko*"))
             self.assertEqual(len(modules), 1, result.stdout)
-            name = subprocess.check_output(["modinfo", "-F", "name", str(modules[0])], text=True)
+            module_name = subprocess.check_output(["modinfo", "-F", "name", str(modules[0])], text=True)
             vermagic = subprocess.check_output(["modinfo", "-F", "vermagic", str(modules[0])], text=True)
-            self.assertEqual(name.strip(), "k10temp_virt")
+            self.assertEqual(module_name.strip(), "k10temp_virt")
             self.assertEqual(vermagic.split()[0], kernel)
 
 

@@ -185,12 +185,17 @@ def install_host(system, args):
     system.run("systemctl", "restart", instance)
     print("\nDry run complete; no changes made." if system.dry_run else "\nHost setup complete.")
     print(f"Exported channels: {len(sensors)}; guest labels must match their count/order.")
-    print("The installer does not stop or start the VM. To activate a newly added channel,\n"
-          "run these on the Proxmox host when ready (your guest session will disconnect):\n"
-          f"  qm shutdown {vmid} --timeout 120\n"
-          f"  qm status {vmid}  # confirm stopped before the next command\n"
-          f"  qm start {vmid}\n"
-          "A reboot within the guest does not recreate the QEMU channel.")
+    if merged != existing:
+        print("The installer does not stop or start the VM. To activate the new channel,\n"
+              "run these on the Proxmox host when ready (your guest session will disconnect):\n"
+              f"  qm shutdown {vmid} --timeout 120\n"
+              f"  qm status {vmid}  # confirm stopped before the next command\n"
+              f"  qm start {vmid}\n"
+              "A reboot within the guest does not recreate the QEMU channel.")
+    else:
+        print("An upgrade using an active channel needs no VM stop/start. If the channel\n"
+              "was added earlier but is not visible in the guest yet, a full VM stop/start\n"
+              "is still required to activate it.")
 
 
 def package_identity(config):
@@ -238,11 +243,17 @@ def install_guest(system, _args):
         print(f"{PORT} is not present yet; service enabled for the next boot.", flush=True)
     print("\nDry run complete; no changes made." if system.dry_run else "\nGuest setup complete.")
     if loaded and changed:
-        print("The currently loaded module is retained. Reboot to use the newly built module.")
-    print("After host setup and a full VM stop/start, check:\n"
+        print("The currently loaded module is retained. To activate the update without rebooting:\n"
+              "  sudo systemctl stop k10temp-virt-guest &&\n"
+              "  sudo modprobe -r k10temp_virt &&\n"
+              "  sudo systemctl start k10temp-virt-guest\n"
+              "A guest reboot also loads the update.")
+    if not system.path(PORT).exists():
+        print("Complete host setup and fully stop/start the VM to activate its new channel.")
+    print("Check readings once the channel is available:\n"
           "  systemctl status k10temp-virt-guest\n"
           "  /usr/bin/sensors\n"
-          "Restart Resources so it discovers the new CPU sensor.")
+          "If Resources still shows N/A, restart it to refresh sensor discovery.")
 
 
 def vm_id(value):

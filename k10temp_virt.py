@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
-"""Persistent, request-driven hwmon bridge. Python standard library only."""
+"""hwmon-virt: on-demand host/guest temperatures. Python standard library only."""
 
 import argparse
 import contextlib
@@ -18,6 +18,7 @@ import struct
 import time
 
 LOG = logging.getLogger("k10temp-virt")
+VERSION = "0.1.0"
 MAGIC = b"KTV1"
 PACKET = struct.Struct("<4sQIii")
 MIN_TEMP, MAX_TEMP = -273150, 1000000
@@ -261,6 +262,7 @@ def stop_service(*_):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--version", action="version", version=f"hwmon-virt {VERSION}")
     parser.add_argument("--verbose", action="store_true")
     sub = parser.add_subparsers(dest="mode", required=True)
     listing = sub.add_parser("list", help="list local hwmon temperature sources")

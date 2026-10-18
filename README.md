@@ -1,6 +1,6 @@
-# k10temp-virt
+# hwmon-virt
 
-Read host temperatures as native Linux sensors inside a VM, on demand.
+Expose host temperatures as native Linux hwmon sensors inside virtual machines, on demand.
 
 A guest application reads `tempN_input`; a small guest module asks a userspace
 bridge for a reading; the bridge requests it from the host over a persistent
@@ -29,6 +29,11 @@ Resources / sensors / other hwmon readers
           host's sensor driver
 ```
 
+The repository is named **hwmon-virt**. The installed module, executable, services,
+and transport retain their original `k10temp-virt` / `k10temp_virt` names so existing
+installations can upgrade without changing their QEMU channel. These names do not
+restrict the host CPU vendor.
+
 ## Scope
 
 - One virtual hwmon device with 1–16 configurable temperature channels.
@@ -51,9 +56,9 @@ named `k10temp_virt`; its default channel label is `Host CPU`.
 Resources 1.10.2 recognizes `k10temp`, `coretemp`, and `zenpower` by name. Other
 applications have their own selection rules; a normal hwmon device does not
 guarantee every application's CPU field will select it. Put the CPU source first
-for a typical one- or two-channel setup, and restart Resources after setup because
-it caches its sensor discovery. A neutral name such as `hosttemp` can be used
-when automatic CPU classification is not wanted.
+for a typical one- or two-channel setup. If Resources still shows N/A after
+setup, restart it to refresh its cached sensor discovery. A neutral name such as
+`hosttemp` can be used when automatic CPU classification is not wanted.
 
 ## Install with the scripts
 
@@ -73,11 +78,13 @@ This installs the module through DKMS, the bridge, its default modprobe options,
 and its systemd service. Existing modprobe options are preserved. If the virtio
 port already exists, it starts/restarts the service; otherwise the service is
 enabled for the next boot. Repeat installs skip an unchanged DKMS build. Updated
-sources force a rebuild; an already-loaded module stays loaded until reboot.
+sources force a rebuild; an already-loaded module stays loaded until you reload
+it or reboot. See [Upgrading](#upgrading).
 Secure Boot key enrollment, if required by your guest, follows your distribution's
 normal DKMS procedure.
 
-On the **Proxmox host**, choose a source and replace `101` with your VM ID:
+On the **Proxmox host**, choose a source. All examples use VM **101**; replace
+it with the ID of your guest:
 
 ```sh
 python3 k10temp_virt.py list
@@ -96,8 +103,9 @@ sources, and build records are replaced without creating backup copies.
 The VM is never stopped or started by the installer.
 
 Repeat `--sensor` for additional channels and configure matching guest labels as
-described below. On subsequent host installs, omit `--sensor` to preserve the
-existing sensor configuration. Only the selected VM's host service is restarted.
+described in [Parameters and additional channels](docs/manual-install.md#parameters-and-additional-channels).
+On subsequent host installs, omit `--sensor` to preserve the existing sensor
+configuration. Only the selected VM's host service is restarted.
 Both installers stop on errors; any completed changes and their backups remain
 in place so you can correct the error and rerun them.
 
@@ -111,240 +119,64 @@ qm start 101
 
 This disconnects sessions in that guest. A reboot within the guest does not
 recreate the QEMU command line. After it starts, check `/usr/bin/sensors` and
-`systemctl status k10temp-virt-guest` in the guest, then restart Resources.
-The manual setup sections below explain the individual steps.
+`systemctl status k10temp-virt-guest` in the guest. If Resources still shows
+N/A, restart it. [Manual setup](docs/manual-install.md) explains the individual steps.
 
-## Build and check
+## Upgrading
 
-In the guest, with a compiler, make, and matching kernel headers installed:
+Use the same new release of this project on both the host and guest. Run the
+installers from the new source directory. Existing installations from before
+the repository rename use the same commands and configuration paths.
 
-```sh
-make
-make test
-```
-
-`make` builds `k10temp_virt.ko` with extra compiler warnings. `make test` runs
-unprivileged transport/source, installer, and test-runner checks. It also compiles
-and exercises the module's completion-result helper to cover replies accepted
-at the timeout boundary and signal interruptions deterministically; this checks
-the decision logic, not a forced kernel scheduling interleaving. Actual-module
-tests are skipped outside the disposable VM. To target another installed kernel:
+On the **host**, omit `--sensor` to retain the existing source configuration:
 
 ```sh
-make KDIR=/lib/modules/KERNEL_VERSION/build
+sudo ./install-host.sh --vmid 101
 ```
 
-To exercise the actual DKMS build path (including its injected `KERNELRELEASE`),
-run this **without sudo**, with DKMS, matching headers, a compiler, make, and
-modinfo installed:
+In the **guest**:
 
 ```sh
-K10TEMP_VIRT_DKMS_TESTS=1 python3 -m unittest discover -s tests -p test_dkms.py -v
+sudo ./install-guest.sh
 ```
 
-It builds the exact source set staged by the guest installer in temporary DKMS
-directories and checks the resulting module. It does not install or load the
-module. Signing is omitted in this isolated build test; the actual installation
-uses the distribution's normal DKMS signing configuration. `Kbuild` contains the
-kernel build rules so DKMS's `KERNELRELEASE` cannot hide the outer Makefile targets.
-
-For real kernel tests without loading this module into the running machine, use
-an x86-64 kernel image matching the headers used for the module build:
+After the guest installer succeeds, activate an updated kernel module without
+rebooting:
 
 ```sh
-python3 tests/run_vm.py /path/to/readable/matching/vmlinuz
+sudo systemctl stop k10temp-virt-guest &&
+sudo modprobe -r k10temp_virt &&
+sudo systemctl start k10temp-virt-guest
 ```
 
-The test runner requires QEMU, a **statically linked BusyBox**, cpio, lm-sensors,
-and Python. It boots an ephemeral initramfs with TCG, uses no VM disks or network,
-and removes its temporary files on exit. It tests module loading/unloading,
-cache hits/expiry, simultaneous readers, channel isolation, invalid replies,
-error-code filtering, invalid device names, timeouts, and bridge disconnects.
-It also runs both services over a real QEMU virtio-serial channel, stops/restarts
-the fixture host responder to verify prompt failures, warning suppression, and
-automatic recovery, and checks that unmodified `sensors -j` discovers the device
-and reports the fixture values. The `K10TEMP_VIRT_KERNEL_TESTS` and
-`K10TEMP_VIRT_TRANSPORT_TESTS` flags are for the disposable VM only; never enable
-them for the ordinary test suite on a production machine.
+The service loads the new module before starting its bridge. If unloading reports
+that the module is in use, start the service again and use a guest reboot to load
+the update. Do not force-unload the module. A guest reboot is also a valid
+alternative to the reload sequence.
 
-Validated on Linux `7.0.0-38-generic`, Python 3.14.4, and QEMU 10.2.1:
-51 distinct tests passed across the local, isolated DKMS, and disposable VM runs:
-16 transport/source tests, 18 installer fixtures, 1 runner check, 1 C completion
-check, 11 actual-module tests, 3 full virtio-serial/lm-sensors tests, and 1 DKMS
-build test. The longest disconnected read in the VM run was 2.1 ms, below the
-300 ms test limit and the former 500 ms timeout. The kernel sources also passed
-`checkpatch` without warnings. Other kernel versions have not been tested.
-
-Installer fixtures cover configuration preservation, repeat runs, dry runs,
-failures, and channel conflicts. The host installer was also dry-run against
-Proxmox VE 9.2.3. The isolated build passed through DKMS 3.2.2 using the installer
-source set. These checks do not install the changes on the running host or guest.
-
-## Set up the host
-
-Copy this project onto the Proxmox host, then install just the Python program:
+An upgrade using an existing, active channel needs **no Proxmox host reboot or
+VM stop/start**. Readings are briefly unavailable while the services/module
+restart. Check the result in the guest:
 
 ```sh
-sudo make install-tools
-/usr/local/libexec/k10temp-virt list
+systemctl is-active k10temp-virt-guest
+/usr/bin/sensors
+/usr/local/libexec/k10temp-virt --version
 ```
 
-`list` prints selectors and their current paths, for example:
+Restart a monitoring application only if its readings remain unavailable.
 
-```text
-k10temp:Tctl        /sys/devices/.../hwmon/hwmon2/temp1_input
-coretemp:Package id 0 /sys/devices/.../hwmon/hwmon3/temp1_input
-```
+## Configuration and documentation
 
-Choose the appropriate selector for that host. The program resolves chip name
-and channel label, instead of assuming `hwmon2` will remain stable across boots.
-If more than one source matches, it reports unavailable; choose an explicit
-absolute input path for that case, and ensure it remains stable. An attribute
-name such as `k10temp:temp1_input` is also accepted.
+The guest defaults to one channel, the hwmon name `k10temp`, a 100 ms cache, and
+a 1000 ms request timeout. The Python bridge uses a shorter 500 ms deadline.
+Host source order must match guest channel order. Configure additional labels,
+cache lifetime, and device name through the [module parameters](docs/manual-install.md#parameters-and-additional-channels).
 
-For an example VM **101**, create `/etc/k10temp-virt/host-101.json`:
-
-```json
-{
-  "sensors": ["k10temp:Tctl"]
-}
-```
-
-Use `coretemp:Package id 0` on an appropriate Intel host, or configure additional
-sources in the array. Only these explicitly configured sources are exported;
-the guest sends a numeric channel, never a filesystem path or command.
-
-### Add a dedicated QEMU channel
-
-With VM 101 shut down, append these arguments to its **existing** `args:` entry
-in `/etc/pve/qemu-server/101.conf`, or add an entry if it has none. Keep this on
-one line, replace `101` with your VM ID, and preserve unrelated arguments:
-
-```text
-args: -device virtio-serial-pci,id=ktvserial -chardev socket,id=ktvchar,path=/run/qemu-server/101.k10temp-virt.sock,server=on,wait=off -device virtserialport,bus=ktvserial.0,nr=1,chardev=ktvchar,name=org.k10temp-virt.0
-```
-
-This adds its own controller and port, independent of the QEMU guest agent.
-QEMU creates the listening Unix socket; the host service connects to it. Its
-socket and parent directory should remain accessible only to the intended host
-administrator/service. No TCP port or guest network configuration is involved.
-
-Inspect the resulting command with `qm showcmd 101 --pretty`, then start the VM.
-The guest should have `/dev/virtio-ports/org.k10temp-virt.0`. Device changes require
-a full VM stop/start; restarting a service or rebooting within the guest is not
-sufficient to recreate the QEMU command line.
-
-Install and start the host service:
-
-```sh
-sudo install -Dm644 systemd/k10temp-virt-host@.service \
-  /etc/systemd/system/k10temp-virt-host@.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now k10temp-virt-host@101
-```
-
-The example service uses root to connect to Proxmox's root-owned QEMU socket.
-It only reads configured temperature files and serves values over that socket.
-Outside Proxmox, the same QEMU arguments and `host --socket PATH --sensor
-CHIP:LABEL` command work; choose your own socket path and service configuration.
-For multiple VMs, use a separate channel/socket and host service per VM. Live
-migration/HA of the custom channel is not managed by this project; arrange the
-service/configuration on each target host before moving the VM.
-
-## Set up the guest
-
-For a one-time trial after building:
-
-```sh
-sudo insmod ./k10temp_virt.ko
-sudo python3 k10temp_virt.py guest
-```
-
-From another terminal, run the **real** `sensors` command, or read the new
-`temp1_input` under `/sys/class/hwmon/`. The bridge must be running; otherwise
-the sensor returns a read error. Stop the bridge before `sudo rmmod k10temp_virt`.
-
-For persistent installation with DKMS installed:
-
-```sh
-sudo install -d /usr/src/k10temp-virt-0.1.0
-sudo install -m644 k10temp_virt.c k10temp_virt_internal.h protocol.h Kbuild Makefile dkms.conf \
-  /usr/src/k10temp-virt-0.1.0/
-sudo dkms add -m k10temp-virt -v 0.1.0
-sudo dkms build -m k10temp-virt -v 0.1.0
-sudo dkms install -m k10temp-virt -v 0.1.0
-sudo make install-tools
-sudo install -Dm644 config/k10temp-virt.conf /etc/modprobe.d/k10temp-virt.conf
-sudo install -Dm644 systemd/k10temp-virt-guest.service \
-  /etc/systemd/system/k10temp-virt-guest.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now k10temp-virt-guest
-```
-
-Use your distribution's DKMS module-signing/key-enrollment procedure if the
-guest enforces signed modules. The project does not change Secure Boot settings.
-
-### Parameters and additional channels
-
-All module parameters are set at load time:
-
-| Parameter | Default | Meaning |
-| --- | --- | --- |
-| `sensor_name` | `k10temp` | Nonempty hwmon name; whitespace, `-`, and `*` are rejected |
-| `labels` | `Host CPU` | Comma-separated channel labels, 1–16, up to 64 characters each |
-| `cache_ms` | `100` | Successful reading cache lifetime, 0–60000 ms; 0 disables caching |
-| `timeout_ms` | `1000` | Per-request kernel response timeout, 1–10000 ms |
-
-For host sources `["k10temp:Tctl", "k10temp:Tccd1"]`, configure two guest labels:
-
-```text
-options k10temp_virt sensor_name=k10temp labels=Host_CPU,Host_CCD1 cache_ms=100 timeout_ms=1000
-```
-
-The host export count/order and guest label count/order must match. Each channel
-has its own cache. Successful reads are timestamped at request start so a slow
-reply does not gain an extra cache lifetime. An error is never cached. Closing
-the guest bridge invalidates all cached values immediately; a host failure may
-remain invisible until a still-fresh cache entry expires (at most `cache_ms`).
-Concurrent reads are serialized, so nearby readers share the resulting cache.
-Waiting behind another reader can add latency to the per-request timeout.
-
-The guest bridge defaults to a 500 ms transport deadline, shorter than the
-module's 1000 ms deadline. If changing these, keep the bridge's `--timeout`
-below the module's `timeout_ms`. A disconnected host fails promptly with
-`ENOTCONN`; reads while the guest bridge reconnects return `ENODATA`. A connected
-but unresponsive host still uses the transport deadline. Applications usually
-display failed reads as unavailable. CPU utilization and graph cadence are
-controlled by the consuming application; this module supplies temperature only.
-
-## Protocol and implementation
-
-`protocol.h` defines a 24-byte, little-endian message shared by the module,
-bridge, and host. It contains the `KTV1` magic/version, a 64-bit request ID, a
-zero-based channel, a signed status, and a signed millidegree value. Requests
-have zero status/value. Replies echo the ID/channel and carry zero status or
-`-EIO`, `-ENODATA`, `-EPROTO`, `-ETIMEDOUT`, or `-ENOTCONN`. Other negative statuses
-in the Linux errno range (−4095 through −1) become `-EIO` at both the guest bridge
-and kernel boundary, preventing kernel-internal restart codes from reaching
-applications. Positive statuses and values below −4095 are malformed.
-Accepted temperatures range from −273150 to 1000000 m°C.
-
-The root-only `/dev/k10temp-virt` accepts exactly one bridge opener. It supports
-blocking/nonblocking reads and poll; each read yields one complete request and
-each write must contain one complete response. Replies are accepted only for
-the currently pending, delivered request, otherwise writes return `ESTALE`.
-Each module load seeds its request counter randomly to avoid matching old
-transport data after a reload. Bridge replies use a separate lock from hwmon
-reads, so a waiting hwmon callback cannot deadlock its responder. A completed
-reply observed under the state lock wins over an expired wait; a wait interrupted
-by a signal retains its interruption result.
-
-The Python stream layer uses `poll` to detect hangups even when a disconnected
-virtio port is not writable, while draining readable data before reporting EOF.
-It handles fragmented/coalesced frames and discards replies with mismatched
-IDs/channels. After a torn frame or reconnect, a request may fail and subsequent
-reads recover; no stale-data fallback is used. The wire format is a small
-project-specific protocol, not a standard VirtIO sensor device.
+- [Manual host and guest setup](docs/manual-install.md), including generic QEMU usage.
+- [Building, testing, and compatibility](docs/testing.md).
+- [Protocol and implementation](docs/protocol.md).
+- [Contributing](CONTRIBUTING.md) and [changelog](CHANGELOG.md).
 
 ## Troubleshooting and removal
 

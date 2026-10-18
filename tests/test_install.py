@@ -6,8 +6,10 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -221,6 +223,18 @@ class InstallerTests(unittest.TestCase):
 
 
 class ArgumentTests(unittest.TestCase):
+    def test_release_versions_match_and_cli_reports_version(self):
+        from k10temp_virt import VERSION
+
+        _, package_version = installer.package_identity((installer.PROJECT / "dkms.conf").read_text())
+        module_version = re.search(r'MODULE_VERSION\("([^"]+)"\)',
+                                   (installer.PROJECT / "k10temp_virt.c").read_text()).group(1)
+        self.assertEqual(package_version, VERSION)
+        self.assertEqual(module_version, VERSION)
+        output = subprocess.check_output([sys.executable, str(installer.PROJECT / "k10temp_virt.py"),
+                                          "--version"], text=True)
+        self.assertEqual(output.strip(), f"hwmon-virt {VERSION}")
+
     def test_package_metadata_is_parsed_without_executing_shell(self):
         self.assertEqual(installer.package_identity('PACKAGE_NAME="example"\nPACKAGE_VERSION="1.2"\n'),
                          ("example", "1.2"))

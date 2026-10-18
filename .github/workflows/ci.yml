@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: GPL-2.0-only
+name: Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  userspace:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - run: make test PYTHON=python
+      - run: git diff --check
+
+  kernel:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install build and VM test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y build-essential dkms kmod \
+            linux-image-generic linux-headers-generic busybox-static cpio lm-sensors \
+            qemu-system-x86 python3
+      - name: Select a matching image and headers
+        run: |
+          kernel_image=$(find /boot -maxdepth 1 -name 'vmlinuz-*-generic' | sort -V | tail -n 1)
+          test -n "$kernel_image"
+          kernel_release=${kernel_image##*/vmlinuz-}
+          test -f "/lib/modules/$kernel_release/build/Makefile"
+          echo "TEST_KERNEL=$kernel_release" >> "$GITHUB_ENV"
+          mkdir -p build
+          sudo install -m 0644 "$kernel_image" build/vmlinuz
+      - name: Build module
+        run: make -j2 KDIR="/lib/modules/$TEST_KERNEL/build"
+      - name: Exercise the installer source set through DKMS
+        run: |
+          K10TEMP_VIRT_DKMS_TESTS=1 K10TEMP_VIRT_TEST_KERNEL="$TEST_KERNEL" \
+            /usr/bin/python3 -m unittest discover -s tests -p test_dkms.py -v
+      - name: Run real module and transport tests in QEMU
+        run: /usr/bin/python3 tests/run_vm.py build/vmlinuz
