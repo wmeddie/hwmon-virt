@@ -24,8 +24,9 @@ Resources inside a Proxmox VM, before and after setup:
 - Administrator access to both machines.
 - Python 3.9 or newer and systemd on both machines.
 - curl and tar on both machines.
-- `lm-sensors` in the guest for the `sensors` command.
-- DKMS, a C compiler, make, and matching kernel headers in the guest.
+- `lm-sensors` (Debian/Ubuntu) or `lm_sensors` (Fedora/RHEL) in the guest
+  for the `sensors` command.
+- DKMS, a C compiler, make, and matching kernel development files in the guest.
 - A working temperature sensor on the host.
 
 The installers check dependencies but do not install missing system packages.
@@ -75,8 +76,40 @@ service. To share more than one sensor, see [additional sensors](docs/manual-ins
 
 ### 3. Install in the guest
 
-Open a terminal **inside the Linux guest VM**, then download and install the
-release there:
+Open a terminal **inside the Linux guest VM** and install the prerequisites for
+your distribution. Building the driver needs headers and build files matching
+the running guest kernel; you do not need to download the full kernel source.
+
+**Debian / Ubuntu:**
+
+```sh
+sudo apt update
+sudo apt install build-essential dkms "linux-headers-$(uname -r)" \
+  python3 curl tar kmod lm-sensors
+```
+
+**Fedora / RHEL family:**
+
+On RHEL, Rocky Linux, or AlmaLinux 9/10, first enable EPEL and its required
+CRB/CodeReady Builder repository using the
+[EPEL setup instructions](https://docs.fedoraproject.org/en-US/epel/getting-started/)
+for your distribution. EPEL supplies DKMS on these systems. Fedora includes
+DKMS in its standard repositories and does not need this step.
+
+```sh
+sudo dnf install gcc make dkms "kernel-devel-$(uname -r)" \
+  elfutils-libelf-devel python3 curl tar kmod lm_sensors
+```
+
+On Fedora/RHEL, `kernel-devel` supplies the files needed to build the driver;
+`kernel-headers` alone is not enough.
+
+If the matching `linux-headers` or `kernel-devel` package is unavailable, update
+the guest kernel through your distribution, reboot into it, and rerun the
+prerequisite commands. For a custom kernel, obtain matching development files
+from its provider.
+
+Then download and install the release **in the guest**:
 
 ```sh
 cd ~
