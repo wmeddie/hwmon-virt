@@ -127,6 +127,20 @@ skipped outside the disposable VM. To target another installed kernel:
 make KDIR=/lib/modules/KERNEL_VERSION/build
 ```
 
+To exercise the actual DKMS build path (including its injected `KERNELRELEASE`),
+run this **without sudo**, with DKMS, matching headers, a compiler, make, and
+modinfo installed:
+
+```sh
+K10TEMP_VIRT_DKMS_TESTS=1 python3 -m unittest discover -s tests -p test_dkms.py -v
+```
+
+It builds the exact source set staged by the guest installer in temporary DKMS
+directories and checks the resulting module. It does not install or load the
+module. Signing is omitted in this isolated build test; the actual installation
+uses the distribution's normal DKMS signing configuration. `Kbuild` contains the
+kernel build rules so DKMS's `KERNELRELEASE` cannot hide the outer Makefile targets.
+
 For real kernel tests without loading this module into the running machine, use
 an x86-64 kernel image matching the headers used for the module build:
 
@@ -151,6 +165,8 @@ Other kernel versions and a live Proxmox installation have not been tested yet.
 The installers have 15 additional fixture tests covering configuration preservation,
 repeat runs, dry runs, failures, and channel conflicts. The host installer was
 also dry-run against Proxmox VE 9.2.3; this did not install services or change a VM.
+The isolated build test also passed through DKMS 3.2.2 using the installer source
+set, including the separate `Kbuild` file.
 
 ## Set up the host
 
@@ -240,7 +256,7 @@ For persistent installation with DKMS installed:
 
 ```sh
 sudo install -d /usr/src/k10temp-virt-0.1.0
-sudo install -m644 k10temp_virt.c protocol.h Makefile dkms.conf \
+sudo install -m644 k10temp_virt.c protocol.h Kbuild Makefile dkms.conf \
   /usr/src/k10temp-virt-0.1.0/
 sudo dkms add -m k10temp-virt -v 0.1.0
 sudo dkms build -m k10temp-virt -v 0.1.0

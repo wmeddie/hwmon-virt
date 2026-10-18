@@ -1,7 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-only
-ifneq ($(KERNELRELEASE),)
-obj-m := k10temp_virt.o
-else
+# Keep wrapper targets available when DKMS supplies KERNELRELEASE; see Kbuild.
 KDIR ?= /lib/modules/$(shell uname -r)/build
 PYTHON ?= python3
 PREFIX ?= /usr/local
@@ -17,4 +15,3 @@ test:
 	$(PYTHON) -m unittest discover -s tests -v
 install-tools:
 	install -Dm755 k10temp_virt.py $(DESTDIR)$(PREFIX)/libexec/k10temp-virt
-endif

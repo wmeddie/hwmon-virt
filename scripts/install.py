@@ -20,6 +20,8 @@ from k10temp_virt import SensorStore  # noqa: E402
 
 PROGRAM = "/usr/local/libexec/k10temp-virt"
 PORT = "/dev/virtio-ports/org.k10temp-virt.0"
+MODULE_FILES = ["k10temp_virt.c", "protocol.h", "Kbuild", "Makefile", "dkms.conf", "LICENSE",
+                "COPYING", "LICENSES/exceptions/Linux-syscall-note"]
 
 
 class System:
@@ -195,9 +197,7 @@ def install_guest(system, _args):
         raise ValueError(f"missing build headers for {kernel}; on Ubuntu/Debian install "
                          f"the matching linux-headers-{kernel} package")
     unit = "k10temp-virt-guest.service"
-    module_files = ["k10temp_virt.c", "protocol.h", "Makefile", "dkms.conf", "LICENSE",
-                    "COPYING", "LICENSES/exceptions/Linux-syscall-note"]
-    sources = read_sources(module_files + ["k10temp_virt.py", "systemd/" + unit,
+    sources = read_sources(MODULE_FILES + ["k10temp_virt.py", "systemd/" + unit,
                                           "config/k10temp-virt.conf"])
     settings = dict(re.findall(r'^PACKAGE_(NAME|VERSION)="([A-Za-z0-9_.+-]+)"$',
                                sources["dkms.conf"].decode(), re.MULTILINE))
@@ -206,12 +206,12 @@ def install_guest(system, _args):
     name, version = settings["NAME"], settings["VERSION"]
     loaded = system.path("/sys/module/k10temp_virt").exists()
     fingerprint = hashlib.sha256()
-    for filename in module_files:
+    for filename in MODULE_FILES:
         fingerprint.update(filename.encode() + b"\0" + sources[filename])
     stamp = f"/var/lib/k10temp-virt/{name}-{version}-{kernel}.sha256"
     signature = (fingerprint.hexdigest() + "\n").encode()
     changed = not system.path(stamp).exists() or system.path(stamp).read_bytes() != signature
-    for filename in module_files:
+    for filename in MODULE_FILES:
         system.write(f"/usr/src/{name}-{version}/{filename}", sources[filename])
     # build auto-adds an unregistered module. Force rebuilds handle source changes
     # within the same version; installation never unloads a running module.

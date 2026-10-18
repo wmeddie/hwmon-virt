@@ -150,6 +150,8 @@ class InstallerTests(unittest.TestCase):
                        "-k", self.kernel), self.commands)
         self.assertNotIn(("systemctl", "restart", "k10temp-virt-guest.service"), self.commands)
         self.assertEqual(self.system.path(installer.PROGRAM).stat().st_mode & 0o777, 0o755)
+        self.assertEqual(self.system.path("/usr/src/k10temp-virt-0.1.0/Kbuild").read_bytes(),
+                         (installer.PROJECT / "Kbuild").read_bytes())
 
     def test_guest_starts_if_port_exists_without_unloading_module(self):
         self.put(installer.PORT, "")
