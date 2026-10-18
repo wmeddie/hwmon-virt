@@ -13,6 +13,4 @@ Initial release candidate, version `0.1.0`:
   warning per outage.
 - Protocol error filtering, sensor-name validation, and timeout-boundary handling.
 - Userspace, installer, real DKMS, and disposable QEMU regression tests.
-- Public project name `hwmon-virt`; existing installed names and protocol remain
-  compatible with early `k10temp-virt` installations.
 - Upgrade documentation and `--version` reporting.

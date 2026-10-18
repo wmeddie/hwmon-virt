@@ -12,8 +12,7 @@ files or build rules should pass the isolated DKMS test. See
 
 Keep temperature reads on demand, keep the host's source allowlist explicit,
 and preserve the existing wire format and installed names unless a change
-includes a documented migration. The repository name is `hwmon-virt`; the
-`k10temp-virt` names remain part of its installation compatibility.
+includes a documented migration.
 
 Describe the problem, the resulting behavior, and the checks you ran in pull
 requests. Add regression coverage for bugs where it can distinguish the old

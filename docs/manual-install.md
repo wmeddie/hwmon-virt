@@ -1,6 +1,6 @@
 # Manual installation
 
-These are the individual steps performed by the [install scripts](../README.md#install-with-the-scripts).
+These are the individual steps performed by the [install scripts](../README.md#installation).
 Run commands from the project directory on the indicated machine. Examples use
 VM **101**; substitute your guest's ID. For an existing installation, follow
 [Upgrading](../README.md#upgrading).
@@ -141,4 +141,54 @@ below the module's `timeout_ms`. A disconnected host fails promptly with
 but unresponsive host still uses the transport deadline. Applications usually
 display failed reads as unavailable. CPU utilization and graph cadence are
 controlled by the consuming application; this module supplies temperature only.
+
+## Monitoring applications
+
+The default hwmon name is `k10temp` for CPU monitor compatibility. This is a
+compatibility name, not the real AMD hardware driver. The module is independently
+named `k10temp_virt`; its default channel label is `Host CPU`.
+Resources 1.10.2 recognizes `k10temp`, `coretemp`, and `zenpower` by name. Other
+applications have their own selection rules; a normal hwmon device does not
+guarantee every application's CPU field will select it. Put the CPU source first
+for a typical one- or two-channel setup. If Resources still shows N/A after
+setup, restart it to refresh its cached sensor discovery. A neutral name such as
+`hosttemp` can be used when automatic CPU classification is not wanted.
+
+## Installer behavior
+
+The host installer verifies the selected sensor, installs the bridge and service,
+and uses `qm set` to add the dedicated channel. Existing QEMU arguments, including
+pending arguments, are preserved. A configuration digest guards against concurrent
+VM edits. A complete existing channel is reused; partial, duplicate, or customized
+channels are rejected for manual reconciliation. Full VM configuration backups
+are saved under `/var/backups/k10temp-virt/`; changed configuration and service
+files get adjacent `.bak.*` copies. Generated installations of the bridge, DKMS
+sources, and build records are replaced without creating backup copies.
+The VM is never stopped or started by the installer.
+
+Both installers stop on errors; completed changes and their backups remain
+in place so you can correct the error and rerun them. The guest installer
+preserves existing modprobe options and rebuilds DKMS sources when they change.
+It leaves a loaded module in place until you reload it or reboot.
+
+## Troubleshooting and removal
+
+- Missing virtio port: check the QEMU arguments and fully stop/start the VM.
+- `ENODATA` before the bridge starts is expected. Check `systemctl status
+  k10temp-virt-guest` and `journalctl -u k10temp-virt-guest`.
+- Host source errors: run `k10temp-virt list` on the host and check
+  `journalctl -u k10temp-virt-host@101`. `--verbose` before the subcommand adds
+  details about missing sources and expired requests.
+- `EBUSY` opening the bridge: another bridge process already has it open.
+- Resources stays at N/A: restart it after the bridge is available, confirm the
+  `k10temp` name and a readable temperature file, and check sandbox access to sysfs.
+
+To remove the guest installation, stop/disable its service, unload
+`k10temp_virt`, and run `dkms remove -m k10temp-virt -v 0.1.0 --all`. Remove its
+service, modprobe configuration, `/usr/src/k10temp-virt-0.1.0`, and installed
+`/usr/local/libexec/k10temp-virt` if unused. The guest installer's build records
+under `/var/lib/k10temp-virt/` can also be removed. On the host, stop/disable the
+corresponding service, remove its configuration and only this project's QEMU
+arguments, then fully stop/start the VM. Run `systemctl daemon-reload` after
+removing unit files.
 
