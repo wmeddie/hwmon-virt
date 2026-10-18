@@ -1,6 +1,6 @@
 # hwmon-virt
 
-See your host computer's temperatures from inside a Linux virtual machine.
+Share your Proxmox VE host's temperatures with its Linux virtual machines.
 
 Virtual machines usually cannot read the physical computer's CPU temperature.
 hwmon-virt makes selected host temperature sensors available inside the VM,
@@ -9,10 +9,12 @@ where tools such as `sensors` and Resources can display them.
 You can share CPU, GPU, or other temperature sensors that Linux can read on the
 host. The readings describe the physical hardware shared by your VMs.
 
+Proxmox VE is the supported deployment target. The host installation and removal
+scripts use Proxmox's VM management tools.
+
 ## Requirements
 
-- A Proxmox VE host and a Linux guest. Other QEMU setups can use the
-  [manual installation guide](docs/manual-install.md).
+- A Proxmox VE host and a Linux guest.
 - Administrator access to both machines.
 - Python 3.9 or newer and systemd on both machines.
 - Git on both machines; `lm-sensors` in the guest for the `sensors` command.
@@ -49,10 +51,10 @@ python3 hwmon_virt.py list
 ```
 
 Choose the sensor you want to share and pass its name to the installer. For
-example, if the list includes `k10temp:Tctl`:
+example, if the list includes `coretemp:Package id 0`:
 
 ```sh
-./install-host.sh --vmid 101 --sensor 'k10temp:Tctl'
+./install-host.sh --vmid 101 --sensor 'coretemp:Package id 0'
 ```
 
 This configures temperature sharing for the selected VM and starts the host
@@ -116,9 +118,9 @@ sudo ./install-guest.sh
 After installation succeeds, load the updated guest driver:
 
 ```sh
-sudo systemctl stop k10temp-virt-guest &&
-sudo modprobe -r k10temp_virt &&
-sudo systemctl start k10temp-virt-guest
+sudo systemctl stop hwmon-virt-guest &&
+sudo modprobe -r hwmon_virt &&
+sudo systemctl start hwmon-virt-guest
 ```
 
 A guest reboot is an alternative to these three commands. If unloading reports
@@ -128,27 +130,50 @@ convenient.
 An upgrade with an existing connection does not require a Proxmox host reboot
 or a VM stop/start. Temperature readings are briefly unavailable during the update.
 
+## Uninstalling
+
+In the **guest**, preview removal, then run it:
+
+```sh
+sudo ./uninstall-guest.sh --dry-run
+sudo ./uninstall-guest.sh
+```
+
+On the **host**, remove sharing for your VM:
+
+```sh
+./uninstall-host.sh --vmid 101 --dry-run
+./uninstall-host.sh --vmid 101
+```
+
+Configuration is kept for reinstallation. Add `--purge` to remove it too.
+The host script leaves other VMs alone and never stops or starts a VM.
+A full VM stop/start removes the disconnected channel; use `--keep-channel`
+if you plan to reinstall and want to keep that connection available.
+
+See [uninstall details](docs/uninstall.md) for what is removed and how to handle errors.
+
 ## Troubleshooting
 
 If the guest has no temperature reading, check its service:
 
 ```sh
-systemctl status k10temp-virt-guest
-journalctl -u k10temp-virt-guest -n 50
+systemctl status hwmon-virt-guest
+journalctl -u hwmon-virt-guest -n 50
 ```
 
 On the host, check the service for your VM:
 
 ```sh
-systemctl status k10temp-virt-host@101
-journalctl -u k10temp-virt-host@101 -n 50
+systemctl status hwmon-virt-host@101
+journalctl -u hwmon-virt-host@101 -n 50
 ```
 
 If `sensors` shows the temperature but a monitoring app does not, restart the
 app. Applications differ in how they choose a CPU sensor; see
 [monitoring application compatibility](docs/manual-install.md#monitoring-applications).
 
-See the manual for [additional troubleshooting and removal](docs/manual-install.md#troubleshooting-and-removal).
+See the manual for [additional troubleshooting](docs/manual-install.md#troubleshooting).
 
 ## More information
 

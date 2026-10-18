@@ -12,8 +12,8 @@ between applications by default.
 Resources / sensors / other hwmon readers
                  │ read tempN_input
                  ▼
-     k10temp_virt.ko ── 100 ms per-channel cache
-                 │ request/reply through /dev/k10temp-virt
+     hwmon_virt.ko ── 100 ms per-channel cache
+                 │ request/reply through /dev/hwmon-virt
                  ▼
         guest Python service
                  │ dedicated virtio-serial port
@@ -39,7 +39,7 @@ provides read-only temperatures, without fan control or thermal zones.
 ## Message format and request handling
 
 `protocol.h` defines a 24-byte, little-endian message shared by the module,
-bridge, and host. It contains the `KTV1` magic/version, a 64-bit request ID, a
+bridge, and host. It contains the `HMV1` magic/version, a 64-bit request ID, a
 zero-based channel, a signed status, and a signed millidegree value. Requests
 have zero status/value. Replies echo the ID/channel and carry zero status or
 `-EIO`, `-ENODATA`, `-EPROTO`, `-ETIMEDOUT`, or `-ENOTCONN`. Other negative statuses
@@ -48,7 +48,7 @@ and kernel boundary, preventing kernel-internal restart codes from reaching
 applications. Positive statuses and values below −4095 are malformed.
 Accepted temperatures range from −273150 to 1000000 m°C.
 
-The root-only `/dev/k10temp-virt` accepts exactly one bridge opener. It supports
+The root-only `/dev/hwmon-virt` accepts exactly one bridge opener. It supports
 blocking/nonblocking reads and poll; each read yields one complete request and
 each write must contain one complete response. Replies are accepted only for
 the currently pending, delivered request, otherwise writes return `ESTALE`.

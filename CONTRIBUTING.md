@@ -25,7 +25,7 @@ license for contributions to it. See [COPYING](COPYING).
 ## Releases
 
 Keep `VERSION` in `hwmon_virt.py`, `PACKAGE_VERSION` in `dkms.conf`, and
-`MODULE_VERSION` in `k10temp_virt.c` consistent; the test suite checks them.
+`MODULE_VERSION` in `hwmon_virt.c` consistent; the test suite checks them.
 Update versioned manual-install/removal examples and the changelog at the same
 time. Each published release gets a new version and a matching `vX.Y.Z` tag.
 Leave release notes under **Unreleased** until the release is actually published.

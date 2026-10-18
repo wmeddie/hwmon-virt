@@ -70,12 +70,12 @@ class InstallerTests(unittest.TestCase):
         installer.install_host(self.system, self.args)
         updated = next(cmd[-1] for cmd in self.commands if cmd[:2] == ("qm", "set"))
         self.assertTrue(updated.startswith("-smbios 'type=0,vendor=Pending Host' "))
-        self.assertEqual(shlex.split(updated).count("virtio-serial-pci,id=ktvserial"), 1)
-        backups = list(self.system.path("/var/backups/k10temp-virt").iterdir())
+        self.assertEqual(shlex.split(updated).count("virtio-serial-pci,id=hmvserial"), 1)
+        backups = list(self.system.path("/var/backups/hwmon-virt").iterdir())
         self.assertEqual(len(backups), 1)
         self.assertEqual(backups[0].read_text(), self.original)
         self.assertEqual(backups[0].stat().st_mode & 0o777, 0o600)
-        config_path = self.system.path("/etc/k10temp-virt/host-101.json")
+        config_path = self.system.path("/etc/hwmon-virt/host-101.json")
         self.assertEqual(json.loads(config_path.read_text()), {"sensors": ["k10temp:Tctl"]})
         # A repeated install without selectors preserves existing formatting too.
         saved = '{"sensors": ["k10temp:Tctl"]}\n'
@@ -87,7 +87,7 @@ class InstallerTests(unittest.TestCase):
         self.assertFalse(any(cmd[:2] == ("qm", "set") for cmd in self.commands))
         self.assertFalse(any(cmd[:2] in (("qm", "shutdown"), ("qm", "start"), ("qm", "stop"))
                              for cmd in self.commands))
-        self.assertIn(("systemctl", "restart", "k10temp-virt-host@101.service"), self.commands)
+        self.assertIn(("systemctl", "restart", "hwmon-virt-host@101.service"), self.commands)
 
     def test_host_dry_run_does_not_write_or_run_mutating_commands(self):
         before = self.snapshot()
@@ -96,7 +96,7 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(self.snapshot(), before)
         self.assertEqual(self.commands, [("qm", "config", "101")])
         self.assertIn("qm set 101 --digest", self.output.getvalue())
-        self.assertFalse(self.system.path("/var/backups/k10temp-virt").exists())
+        self.assertFalse(self.system.path("/var/backups/hwmon-virt").exists())
 
     def test_host_rejects_bad_sensor_before_writing(self):
         before = self.snapshot()
@@ -109,7 +109,7 @@ class InstallerTests(unittest.TestCase):
 
     def test_host_conflicts_and_locked_vm_leave_system_untouched(self):
         before = self.snapshot()
-        for config in ("args: -device virtio-serial-pci,id=ktvserial\n", "lock: backup\n",
+        for config in ("args: -device virtio-serial-pci,id=hmvserial\n", "lock: backup\n",
                        "template: 1\n"):
             self.qm_config = config
             with self.assertRaises(ValueError):
@@ -121,7 +121,7 @@ class InstallerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "first install"):
             installer.install_host(self.system, self.args)
         for saved in ('[]', '{"sensors": "k10temp:Tctl"}', '{"sensors": []}'):
-            self.put("/etc/k10temp-virt/host-101.json", saved)
+            self.put("/etc/hwmon-virt/host-101.json", saved)
             with self.assertRaises(ValueError):
                 installer.install_host(self.system, self.args)
 
@@ -135,37 +135,37 @@ class InstallerTests(unittest.TestCase):
             with self.assertRaises(subprocess.CalledProcessError):
                 installer.install_host(self.system, self.args)
         self.assertFalse(any(cmd[0] == "systemctl" for cmd in self.commands))
-        backups = list(self.system.path("/var/backups/k10temp-virt").iterdir())
+        backups = list(self.system.path("/var/backups/hwmon-virt").iterdir())
         self.assertEqual(backups[0].read_text(), self.original)
 
     def test_guest_builds_for_running_kernel_and_preserves_options(self):
-        options = "options k10temp_virt labels=CPU,CCD cache_ms=200\n"
-        config_path = self.put("/etc/modprobe.d/k10temp-virt.conf", options)
+        options = "options hwmon_virt labels=CPU,CCD cache_ms=200\n"
+        config_path = self.put("/etc/modprobe.d/hwmon-virt.conf", options)
         for _ in range(2):
             installer.install_guest(self.system, self.args)
         self.assertEqual(config_path.read_text(), options)
-        self.assertIn(("dkms", "build", "-m", "k10temp-virt", "-v", "0.1.0",
+        self.assertIn(("dkms", "build", "-m", "hwmon-virt", "-v", "0.1.0",
                        "-k", self.kernel, "--force"), self.commands)
-        self.assertIn(("dkms", "install", "-m", "k10temp-virt", "-v", "0.1.0",
+        self.assertIn(("dkms", "install", "-m", "hwmon-virt", "-v", "0.1.0",
                        "-k", self.kernel, "--force"), self.commands)
-        self.assertIn(("dkms", "build", "-m", "k10temp-virt", "-v", "0.1.0",
+        self.assertIn(("dkms", "build", "-m", "hwmon-virt", "-v", "0.1.0",
                        "-k", self.kernel), self.commands)
-        self.assertNotIn(("systemctl", "restart", "k10temp-virt-guest.service"), self.commands)
+        self.assertNotIn(("systemctl", "restart", "hwmon-virt-guest.service"), self.commands)
         self.assertEqual(self.system.path(installer.PROGRAM).stat().st_mode & 0o777, 0o755)
-        self.assertEqual(self.system.path("/usr/src/k10temp-virt-0.1.0/Kbuild").read_bytes(),
+        self.assertEqual(self.system.path("/usr/src/hwmon-virt-0.1.0/Kbuild").read_bytes(),
                          (installer.PROJECT / "Kbuild").read_bytes())
 
     def test_guest_starts_if_port_exists_without_unloading_module(self):
         self.put(installer.PORT, "")
-        self.system.path("/sys/module/k10temp_virt").mkdir(parents=True)
+        self.system.path("/sys/module/hwmon_virt").mkdir(parents=True)
         installer.install_guest(self.system, self.args)
-        self.assertIn(("systemctl", "restart", "k10temp-virt-guest.service"), self.commands)
+        self.assertIn(("systemctl", "restart", "hwmon-virt-guest.service"), self.commands)
         self.assertFalse(any(cmd[0] in ("modprobe", "rmmod") for cmd in self.commands))
         self.assertIn("currently loaded module is retained", self.output.getvalue())
 
     def test_guest_retries_an_interrupted_update_even_when_sources_match(self):
         installer.install_guest(self.system, self.args)
-        stamp = self.system.path(f"/var/lib/k10temp-virt/k10temp-virt-0.1.0-{self.kernel}.sha256")
+        stamp = self.system.path(f"/var/lib/hwmon-virt/hwmon-virt-0.1.0-{self.kernel}.sha256")
         stamp.write_text("previous successful build\n")
         self.commands.clear()
         installer.install_guest(self.system, self.args)
@@ -174,10 +174,10 @@ class InstallerTests(unittest.TestCase):
         self.assertNotEqual(stamp.read_text(), "previous successful build\n")
 
     def test_derived_files_are_replaced_without_backup_clutter(self):
-        source = self.put("/usr/src/k10temp-virt-0.1.0/k10temp_virt.c", "old source\n")
+        source = self.put("/usr/src/hwmon-virt-0.1.0/hwmon_virt.c", "old source\n")
         self.put(installer.PROGRAM, "old bridge\n")
         installer.install_guest(self.system, self.args)
-        self.assertEqual(source.read_bytes(), (installer.PROJECT / "k10temp_virt.c").read_bytes())
+        self.assertEqual(source.read_bytes(), (installer.PROJECT / "hwmon_virt.c").read_bytes())
         self.assertFalse(list(source.parent.glob("*.bak.*")))
         self.assertFalse(list(self.system.path(installer.PROGRAM).parent.glob("*.bak.*")))
 
@@ -208,7 +208,7 @@ class InstallerTests(unittest.TestCase):
             with self.assertRaises(subprocess.CalledProcessError):
                 installer.install_guest(self.system, self.args)
         self.assertFalse(self.system.path(installer.PROGRAM).exists())
-        self.assertFalse(self.system.path("/etc/systemd/system/k10temp-virt-guest.service").exists())
+        self.assertFalse(self.system.path("/etc/systemd/system/hwmon-virt-guest.service").exists())
 
     def test_file_updates_have_backups_and_reject_symlinks(self):
         path = self.put("/etc/example.conf", "before\n")
@@ -228,7 +228,7 @@ class ArgumentTests(unittest.TestCase):
 
         _, package_version = installer.package_identity((installer.PROJECT / "dkms.conf").read_text())
         module_version = re.search(r'MODULE_VERSION\("([^"]+)"\)',
-                                   (installer.PROJECT / "k10temp_virt.c").read_text()).group(1)
+                                   (installer.PROJECT / "hwmon_virt.c").read_text()).group(1)
         self.assertEqual(package_version, VERSION)
         self.assertEqual(module_version, VERSION)
         output = subprocess.check_output([sys.executable, str(installer.PROJECT / "hwmon_virt.py"),
@@ -247,13 +247,13 @@ class ArgumentTests(unittest.TestCase):
         args = installer.merge_args("-no-reboot", 101)
         self.assertEqual(installer.merge_args(args, 101), args)
         # Equivalent shell quoting is recognized without rewriting it.
-        quoted = args.replace("virtio-serial-pci,id=ktvserial", "'virtio-serial-pci,id=ktvserial'")
+        quoted = args.replace("virtio-serial-pci,id=hmvserial", "'virtio-serial-pci,id=hmvserial'")
         self.assertEqual(installer.merge_args(quoted, 101), quoted)
 
     def test_partial_duplicate_or_other_vmid_channel_is_rejected(self):
         args = installer.merge_args("", 101)
-        for existing in (args + " " + args, args.replace("101.k10temp", "222.k10temp"),
-                         "-chardev socket,id=ktvchar,path=/elsewhere", args + " -name 'broken"):
+        for existing in (args + " " + args, args.replace("101.hwmon", "222.hwmon"),
+                         "-chardev socket,id=hmvchar,path=/elsewhere", args + " -name 'broken"):
             with self.subTest(existing=existing):
                 with self.assertRaises(ValueError):
                     installer.merge_args(existing, 101)

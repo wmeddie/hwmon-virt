@@ -8,17 +8,17 @@ import tempfile
 import unittest
 
 
-@unittest.skipUnless(os.environ.get("K10TEMP_VIRT_DKMS_TESTS") == "1",
-                     "set K10TEMP_VIRT_DKMS_TESTS=1 to run a real isolated DKMS build")
+@unittest.skipUnless(os.environ.get("HWMON_VIRT_DKMS_TESTS") == "1",
+                     "set HWMON_VIRT_DKMS_TESTS=1 to run a real isolated DKMS build")
 class DKMSBuildTests(unittest.TestCase):
     def test_installer_sources_build_through_dkms(self):
         from scripts.install import MODULE_FILES, PROJECT, package_identity
 
         self.assertNotEqual(os.geteuid(), 0, "run the isolated build test without sudo")
-        kernel = os.environ.get("K10TEMP_VIRT_TEST_KERNEL", os.uname().release)
+        kernel = os.environ.get("HWMON_VIRT_TEST_KERNEL", os.uname().release)
         headers = Path("/lib/modules") / kernel / "build"
         name, version = package_identity((PROJECT / "dkms.conf").read_text())
-        with tempfile.TemporaryDirectory(prefix="ktv-dkms-") as directory:
+        with tempfile.TemporaryDirectory(prefix="hmv-dkms-") as directory:
             root = Path(directory)
             source = root / "src" / f"{name}-{version}"
             for filename in MODULE_FILES:
@@ -44,11 +44,11 @@ class DKMSBuildTests(unittest.TestCase):
             logs = "\n".join(path.read_text() for path in (root / "dkms").rglob("make.log"))
             self.assertEqual(result.returncode, 0, result.stdout + "\n" + logs)
             modules = list((root / "dkms" / name / version / kernel)
-                           .glob("*/module/k10temp_virt.ko*"))
+                           .glob("*/module/hwmon_virt.ko*"))
             self.assertEqual(len(modules), 1, result.stdout)
             module_name = subprocess.check_output(["modinfo", "-F", "name", str(modules[0])], text=True)
             vermagic = subprocess.check_output(["modinfo", "-F", "vermagic", str(modules[0])], text=True)
-            self.assertEqual(module_name.strip(), "k10temp_virt")
+            self.assertEqual(module_name.strip(), "hwmon_virt")
             self.assertEqual(vermagic.split()[0], kernel)
 
 

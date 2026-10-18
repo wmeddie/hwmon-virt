@@ -1,5 +1,8 @@
 # Building and testing
 
+Deployment testing targets Proxmox VE hosts with Linux guests. The standalone
+QEMU tests below exercise the kernel module and transport in isolation.
+
 Run these commands from the project root.
 
 In the guest, with a compiler, make, and matching kernel headers installed:
@@ -9,8 +12,8 @@ make
 make test
 ```
 
-`make` builds `k10temp_virt.ko` with extra compiler warnings. `make test` runs
-unprivileged transport/source, installer, and test-runner checks. It also compiles
+`make` builds `hwmon_virt.ko` with extra compiler warnings. `make test` runs
+unprivileged transport/source, installer/uninstaller, and test-runner checks. It also compiles
 and exercises the module's completion-result helper to cover replies accepted
 at the timeout boundary and signal interruptions deterministically; this checks
 the decision logic, not a forced kernel scheduling interleaving. Actual-module
@@ -25,7 +28,7 @@ run this **without sudo**, with DKMS, matching headers, a compiler, make, and
 modinfo installed:
 
 ```sh
-K10TEMP_VIRT_DKMS_TESTS=1 python3 -m unittest discover -s tests -p test_dkms.py -v
+HWMON_VIRT_DKMS_TESTS=1 python3 -m unittest discover -s tests -p test_dkms.py -v
 ```
 
 It builds the exact source set staged by the guest installer in temporary DKMS
@@ -49,8 +52,8 @@ error-code filtering, invalid device names, timeouts, and bridge disconnects.
 It also runs both services over a real QEMU virtio-serial channel, stops/restarts
 the fixture host responder to verify prompt failures, warning suppression, and
 automatic recovery, and checks that unmodified `sensors -j` discovers the device
-and reports the fixture values. The `K10TEMP_VIRT_KERNEL_TESTS` and
-`K10TEMP_VIRT_TRANSPORT_TESTS` flags are for the disposable VM only; never enable
+and reports the fixture values. The `HWMON_VIRT_KERNEL_TESTS` and
+`HWMON_VIRT_TRANSPORT_TESTS` flags are for the disposable VM only; never enable
 them for the ordinary test suite on a production machine.
 
 ## Local validation
@@ -60,10 +63,11 @@ and 3.14.4. Module builds and isolated DKMS builds passed against
 `6.17.0-23-generic` and `7.0.0-38-generic` headers. Runtime kernel and transport
 tests passed in QEMU 10.2.1 with Linux `7.0.0-38-generic` and Python 3.14.4.
 
-52 distinct tests passed across the local, isolated DKMS, and disposable VM runs:
-16 transport/source tests, 19 installer fixtures, 1 runner check, 1 C completion
+72 distinct tests passed across the local, isolated DKMS, and disposable VM runs:
+16 transport/source tests, 19 installer fixtures, 20 uninstaller fixtures,
+1 runner check, 1 C completion
 check, 11 actual-module tests, 3 full virtio-serial/lm-sensors tests, and 1 DKMS
-build test. The longest disconnected read in the VM run was 2.4 ms, below the
+build test. The longest disconnected read in the VM run was 2.3 ms, below the
 300 ms test limit and the former 500 ms timeout. The kernel sources also passed
 `checkpatch` without warnings. Other kernel versions have not been locally tested.
 
@@ -71,11 +75,11 @@ Installer fixtures cover configuration preservation, repeat runs, dry runs,
 failures, channel conflicts, and release-version consistency. The isolated build
 passed through DKMS 3.2.2 using the installer source set.
 
-A live installation and module upgrade have also been reported working with
-Proxmox VE 9.2.3 and an Ubuntu 26.04.1 guest on Linux `7.0.0-38-generic`. Resources stayed
-open during that upgrade without an observed crash or interruption requiring an
-application restart. This is an observation from that setup, not a guarantee
-about every monitor's sensor-discovery behavior.
+Uninstaller fixtures cover dry runs, configuration preservation and purging,
+multiple DKMS versions, other VMs and shared files, customized QEMU channels,
+busy modules, failed commands, repeated removal, and symlink refusal. A read-only
+guest dry run also passed against systemd and DKMS. Live installation, removal,
+and reinstallation with these scripts remain to be validated.
 
 ## Continuous integration
 
@@ -83,14 +87,14 @@ The GitHub Actions workflow runs local tests on Python 3.9 through 3.14 and
 separate kernel/DKMS/QEMU jobs on Ubuntu 22.04 and 24.04. Each kernel job installs
 a matching generic image and headers into its disposable runner and uses the
 system Python to build the test initramfs. It never loads the module into the
-runner's own kernel. The workflow is configured for publication; its first
-hosted results will be available after the repository is created.
+runner's own kernel. Hosted results are listed in
+[GitHub Actions](https://github.com/wmeddie/hwmon-virt/actions).
 
 The automated target matrix is not a claim that every combination is already
 validated. Consult the test results for the release you use. Other architectures,
 Secure Boot enrollment, and Proxmox live migration are outside the automated tests.
 
 To test DKMS against an installed kernel other than the running one, set
-`K10TEMP_VIRT_TEST_KERNEL` to that kernel's release while enabling the DKMS test.
+`HWMON_VIRT_TEST_KERNEL` to that kernel's release while enabling the DKMS test.
 The installer always targets the running guest kernel; this override is only
 for the isolated build test.

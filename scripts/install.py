@@ -18,9 +18,9 @@ PROJECT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT))
 from hwmon_virt import SensorStore  # noqa: E402
 
-PROGRAM = "/usr/local/libexec/k10temp-virt"
-PORT = "/dev/virtio-ports/org.k10temp-virt.0"
-MODULE_FILES = ["k10temp_virt.c", "k10temp_virt_internal.h", "protocol.h", "Kbuild",
+PROGRAM = "/usr/local/libexec/hwmon-virt"
+PORT = "/dev/virtio-ports/org.hwmon-virt.0"
+MODULE_FILES = ["hwmon_virt.c", "hwmon_virt_internal.h", "protocol.h", "Kbuild",
                 "Makefile", "dkms.conf", "LICENSE", "COPYING",
                 "LICENSES/exceptions/Linux-syscall-note"]
 
@@ -47,7 +47,7 @@ class System:
         if missing:
             raise ValueError("missing required commands: " + ", ".join(missing))
         if not self.path("/run/systemd/system").is_dir():
-            raise ValueError("run this installer on the target machine with systemd running")
+            raise ValueError("run this script on the target machine with systemd running")
 
     def backup(self, path, data=None, directory=None):
         directory = directory or path.parent
@@ -90,16 +90,16 @@ class System:
 
 def channel_args(vmid):
     return [
-        "-device", "virtio-serial-pci,id=ktvserial",
-        "-chardev", f"socket,id=ktvchar,path=/run/qemu-server/{vmid}.k10temp-virt.sock,"
+        "-device", "virtio-serial-pci,id=hmvserial",
+        "-chardev", f"socket,id=hmvchar,path=/run/qemu-server/{vmid}.hwmon-virt.sock,"
         "server=on,wait=off",
-        "-device", "virtserialport,bus=ktvserial.0,nr=1,chardev=ktvchar,"
-        "name=org.k10temp-virt.0",
+        "-device", "virtserialport,bus=hmvserial.0,nr=1,chardev=hmvchar,"
+        "name=org.hwmon-virt.0",
     ]
 
 
-def merge_args(existing, vmid):
-    """Keep original quoting; accept our complete channel or reject conflicts."""
+def split_channel(existing, vmid):
+    """Separate one complete project channel, rejecting ambiguous edits."""
     tokens = shlex.split(existing)
     desired = channel_args(vmid)
     found = 0
@@ -110,13 +110,19 @@ def merge_args(existing, vmid):
                 del tokens[index:index + 2]
                 found += 1
                 break
-    reserved = ("ktvserial", "ktvchar", "org.k10temp-virt.0", ".k10temp-virt.sock")
+    reserved = ("hmvserial", "hmvchar", "org.hwmon-virt.0", ".hwmon-virt.sock")
     if found not in (0, 3) or any(part in token for token in tokens for part in reserved):
         raise ValueError("existing QEMU args contain a partial, duplicate, or customized "
-                         "k10temp-virt channel; reconcile it manually before installing")
-    if found == 3:
+                         "hwmon-virt channel; reconcile it manually before continuing")
+    return tokens, found == 3
+
+
+def merge_args(existing, vmid):
+    """Keep original quoting; accept our complete channel or reject conflicts."""
+    _, found = split_channel(existing, vmid)
+    if found:
         return existing
-    return existing + (" " if existing else "") + shlex.join(desired)
+    return existing + (" " if existing else "") + shlex.join(channel_args(vmid))
 
 
 def read_sources(names):
@@ -131,7 +137,7 @@ def install_service(system, sources, name):
 
 def install_host(system, args):
     system.require("qm", "systemctl")
-    unit = "k10temp-virt-host@.service"
+    unit = "hwmon-virt-host@.service"
     sources = read_sources(["hwmon_virt.py", "systemd/" + unit])
     vmid = str(args.vmid)
     vm_config = system.path(f"/etc/pve/qemu-server/{vmid}.conf")
@@ -147,7 +153,7 @@ def install_host(system, args):
     # qm config includes pending changes by default; don't discard pending args.
     existing = fields.get("args", "")
     merged = merge_args(existing, vmid)
-    config_name = f"/etc/k10temp-virt/host-{vmid}.json"
+    config_name = f"/etc/hwmon-virt/host-{vmid}.json"
     config_path = system.path(config_name)
     if args.sensor is not None:
         sensors = args.sensor
@@ -172,7 +178,7 @@ def install_host(system, args):
     data = (json.dumps({"sensors": sensors}, indent=2) + "\n").encode()
     system.write(config_name, data, preserve=args.sensor is None)
     if merged != existing:
-        system.backup(vm_config, original, system.path("/var/backups/k10temp-virt"))
+        system.backup(vm_config, original, system.path("/var/backups/hwmon-virt"))
         system.run("qm", "set", vmid, "--digest", digest, "--args", merged)
     else:
         print("QEMU channel is already configured.", flush=True)
@@ -180,7 +186,7 @@ def install_host(system, args):
         system.run("qm", "showcmd", vmid, "--pretty", read_only=True)
         print("QEMU command generation succeeded. Inspect with: qm showcmd " + vmid + " --pretty")
     system.run("systemctl", "daemon-reload")
-    instance = f"k10temp-virt-host@{vmid}.service"
+    instance = f"hwmon-virt-host@{vmid}.service"
     system.run("systemctl", "enable", instance)
     system.run("systemctl", "restart", instance)
     print("\nDry run complete; no changes made." if system.dry_run else "\nHost setup complete.")
@@ -212,15 +218,15 @@ def install_guest(system, _args):
     if not system.path(f"/lib/modules/{kernel}/build/Makefile").is_file():
         raise ValueError(f"missing build headers for {kernel}; on Ubuntu/Debian install "
                          f"the matching linux-headers-{kernel} package")
-    unit = "k10temp-virt-guest.service"
+    unit = "hwmon-virt-guest.service"
     sources = read_sources(MODULE_FILES + ["hwmon_virt.py", "systemd/" + unit,
-                                          "config/k10temp-virt.conf"])
+                                          "config/hwmon-virt.conf"])
     name, version = package_identity(sources["dkms.conf"].decode())
-    loaded = system.path("/sys/module/k10temp_virt").exists()
+    loaded = system.path("/sys/module/hwmon_virt").exists()
     fingerprint = hashlib.sha256()
     for filename in MODULE_FILES:
         fingerprint.update(filename.encode() + b"\0" + sources[filename])
-    stamp = f"/var/lib/k10temp-virt/{name}-{version}-{kernel}.sha256"
+    stamp = f"/var/lib/hwmon-virt/{name}-{version}-{kernel}.sha256"
     signature = (fingerprint.hexdigest() + "\n").encode()
     changed = not system.path(stamp).exists() or system.path(stamp).read_bytes() != signature
     for filename in MODULE_FILES:
@@ -233,7 +239,7 @@ def install_guest(system, _args):
     # Record success only after installation, so interrupted updates rebuild on retry.
     system.write(stamp, signature, backup=False)
     install_service(system, sources, unit)
-    system.write("/etc/modprobe.d/k10temp-virt.conf", sources["config/k10temp-virt.conf"],
+    system.write("/etc/modprobe.d/hwmon-virt.conf", sources["config/hwmon-virt.conf"],
                  preserve=True)
     system.run("systemctl", "daemon-reload")
     system.run("systemctl", "enable", unit)
@@ -244,14 +250,14 @@ def install_guest(system, _args):
     print("\nDry run complete; no changes made." if system.dry_run else "\nGuest setup complete.")
     if loaded and changed:
         print("The currently loaded module is retained. To activate the update without rebooting:\n"
-              "  sudo systemctl stop k10temp-virt-guest &&\n"
-              "  sudo modprobe -r k10temp_virt &&\n"
-              "  sudo systemctl start k10temp-virt-guest\n"
+              "  sudo systemctl stop hwmon-virt-guest &&\n"
+              "  sudo modprobe -r hwmon_virt &&\n"
+              "  sudo systemctl start hwmon-virt-guest\n"
               "A guest reboot also loads the update.")
     if not system.path(PORT).exists():
         print("Complete host setup and fully stop/start the VM to activate its new channel.")
     print("Check readings once the channel is available:\n"
-          "  systemctl status k10temp-virt-guest\n"
+          "  systemctl status hwmon-virt-guest\n"
           "  /usr/bin/sensors\n"
           "If Resources still shows N/A, restart it to refresh sensor discovery.")
 

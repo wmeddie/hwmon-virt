@@ -13,7 +13,7 @@
 #include <linux/wait.h>
 
 #include "protocol.h"
-#include "k10temp_virt_internal.h"
+#include "hwmon_virt_internal.h"
 
 #define MAX_CHANNELS 16
 
@@ -42,7 +42,7 @@ static struct {
 	bool queued;
 	bool done;
 	u64 sequence;
-	struct ktv_message request;
+	struct hmv_message request;
 	int status;
 	s32 value;
 	struct {
@@ -90,8 +90,8 @@ static int sensor_read(struct device *dev, enum hwmon_sensor_types type,
 	}
 	state.cache[channel].valid = false;
 	state.sequence++;
-	state.request = (struct ktv_message) {
-		.magic = cpu_to_le32(KTV_MAGIC),
+	state.request = (struct hmv_message) {
+		.magic = cpu_to_le32(HMV_MAGIC),
 		.id_lo = cpu_to_le32(lower_32_bits(state.sequence)),
 		.id_hi = cpu_to_le32(upper_32_bits(state.sequence)),
 		.channel = cpu_to_le32(channel),
@@ -108,7 +108,7 @@ static int sensor_read(struct device *dev, enum hwmon_sensor_types type,
 	mutex_lock(&state_lock);
 	state.pending = false;
 	state.queued = false;
-	ret = ktv_wait_result(waited, state.done, state.status);
+	ret = hmv_wait_result(waited, state.done, state.status);
 	if (!ret) {
 		*value = state.value;
 		state.cache[channel].value = state.value;
@@ -195,7 +195,7 @@ static ssize_t bridge_read(struct file *file, char __user *buf, size_t count,
 {
 	int ret;
 
-	if (count < sizeof(struct ktv_message))
+	if (count < sizeof(struct hmv_message))
 		return -EINVAL;
 	for (;;) {
 		mutex_lock(&state_lock);
@@ -222,7 +222,7 @@ static ssize_t bridge_read(struct file *file, char __user *buf, size_t count,
 static ssize_t bridge_write(struct file *file, const char __user *buf,
 			    size_t count, loff_t *pos)
 {
-	struct ktv_message reply;
+	struct hmv_message reply;
 	s32 status, value;
 	int ret = sizeof(reply);
 
@@ -232,9 +232,9 @@ static ssize_t bridge_write(struct file *file, const char __user *buf,
 		return -EFAULT;
 	status = (s32)le32_to_cpu(reply.status);
 	value = (s32)le32_to_cpu(reply.value);
-	if (le32_to_cpu(reply.magic) != KTV_MAGIC ||
+	if (le32_to_cpu(reply.magic) != HMV_MAGIC ||
 	    status > 0 || status < -4095 ||
-	    (!status && (value < KTV_MIN_TEMP || value > KTV_MAX_TEMP)))
+	    (!status && (value < HMV_MIN_TEMP || value > HMV_MAX_TEMP)))
 		return -EINVAL;
 
 	/* Never take the hwmon/request mutex: its reader is waiting for us. */
@@ -245,7 +245,7 @@ static ssize_t bridge_write(struct file *file, const char __user *buf,
 	    reply.channel != state.request.channel) {
 		ret = -ESTALE;
 	} else {
-		state.status = ktv_reply_status(status);
+		state.status = hmv_reply_status(status);
 		state.value = value;
 		state.done = true;
 	}
@@ -277,17 +277,17 @@ static const struct file_operations bridge_ops = {
 };
 static struct miscdevice bridge_device = {
 	.minor = MISC_DYNAMIC_MINOR,
-	.name = "k10temp-virt",
+	.name = "hwmon-virt",
 	.fops = &bridge_ops,
 	.mode = 0600,
 };
 
-static int __init k10temp_virt_init(void)
+static int __init hwmon_virt_init(void)
 {
 	unsigned int i;
 	int ret;
 
-	static_assert(sizeof(struct ktv_message) == 24);
+	static_assert(sizeof(struct hmv_message) == 24);
 	if (!num_labels || cache_ms > 60000 || !timeout_ms || timeout_ms > 10000)
 		return -EINVAL;
 	if (!sensor_name || !sensor_name[0])
@@ -313,20 +313,20 @@ static int __init k10temp_virt_init(void)
 		misc_deregister(&bridge_device);
 		return ret;
 	}
-	pr_info("k10temp_virt: %u temperature channel(s), cache %u ms\n",
+	pr_info("hwmon_virt: %u temperature channel(s), cache %u ms\n",
 		num_labels, cache_ms);
 	return 0;
 }
 
-static void __exit k10temp_virt_exit(void)
+static void __exit hwmon_virt_exit(void)
 {
 	/* An open bridge pins this module through bridge_ops.owner. */
 	hwmon_device_unregister(hwmon_dev);
 	misc_deregister(&bridge_device);
 }
 
-module_init(k10temp_virt_init);
-module_exit(k10temp_virt_exit);
+module_init(hwmon_virt_init);
+module_exit(hwmon_virt_exit);
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("On-demand virtual hwmon temperatures over a userspace bridge");
 MODULE_VERSION("0.1.0");

@@ -1,12 +1,12 @@
 /* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
-#ifndef K10TEMP_VIRT_PROTOCOL_H
-#define K10TEMP_VIRT_PROTOCOL_H
+#ifndef HWMON_VIRT_PROTOCOL_H
+#define HWMON_VIRT_PROTOCOL_H
 
 #include <linux/types.h>
 
-#define KTV_MAGIC 0x3156544b /* ASCII KTV1 */
-#define KTV_MIN_TEMP (-273150)
-#define KTV_MAX_TEMP 1000000
+#define HMV_MAGIC 0x31564d48 /* ASCII HMV1 */
+#define HMV_MIN_TEMP (-273150)
+#define HMV_MAX_TEMP 1000000
 
 /* Exactly 24 bytes, little endian, identical on 32/64-bit systems.
  * A request has zero status/value. A reply echoes the ID and channel;
@@ -14,7 +14,7 @@
  * other negative Linux errnos are mapped to -EIO by the receiver.
  * value is signed millidegrees C.
  */
-struct ktv_message {
+struct hmv_message {
 	__le32 magic;
 	__le32 id_lo;
 	__le32 id_hi;

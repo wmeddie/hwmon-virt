@@ -3,7 +3,7 @@
 """Build a disposable initramfs and run real module tests under QEMU/TCG.
 
 Usage: python3 tests/run_vm.py /path/to/readable/matching/vmlinuz
-Requires Linux, QEMU, static busybox, cpio, sensors and a built k10temp_virt.ko.
+Requires Linux, QEMU, static busybox, cpio, sensors and a built hwmon_virt.ko.
 Only writes a temporary build directory; never installs/loads anything on the host.
 """
 import argparse
@@ -37,7 +37,7 @@ def main():
     except ValueError as exc:
         parser.error(str(exc))
     project = Path(__file__).resolve().parent.parent
-    with tempfile.TemporaryDirectory(prefix="ktv-vm-") as work:
+    with tempfile.TemporaryDirectory(prefix="hmv-vm-") as work:
         work = Path(work)
         root = work / "root"
         root.mkdir()
@@ -67,10 +67,10 @@ def main():
             libraries.update(re.findall(r"(?:=>\s+|^\s*)(/\S+)", output, re.MULTILINE))
         for library in libraries:
             copy(library)
-        copy(project / "k10temp_virt.ko", "/k10temp_virt.ko")
+        copy(project / "hwmon_virt.ko", "/hwmon_virt.ko")
         copy(project / "hwmon_virt.py", "/project/hwmon_virt.py")
         for test in (project / "tests").glob("test_*.py"):
-            if test.name in ("test_install.py", "test_vm_runner.py"):
+            if test.name in ("test_install.py", "test_uninstall.py", "test_vm_runner.py"):
                 continue  # Host-side tool/installer fixtures run via make test.
             copy(test, "/project/tests/" + test.name)
         for directory in ("proc", "sys", "dev", "tmp", "run"):
@@ -81,13 +81,13 @@ mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev
 cd /project
-if insmod /k10temp_virt.ko cache_ms=500 timeout_ms=250 labels=Host_CPU,Second; then
-    if K10TEMP_VIRT_KERNEL_TESTS=1 python3 -m unittest discover -s tests -v; then
-        if rmmod k10temp_virt && insmod /k10temp_virt.ko cache_ms=100 labels=Host_CPU,Second; then
-            K10TEMP_VIRT_TRANSPORT_TESTS=1 python3 -m unittest discover -s tests -p test_transport.py -v
+if insmod /hwmon_virt.ko cache_ms=500 timeout_ms=250 labels=Host_CPU,Second; then
+    if HWMON_VIRT_KERNEL_TESTS=1 python3 -m unittest discover -s tests -v; then
+        if rmmod hwmon_virt && insmod /hwmon_virt.ko cache_ms=100 labels=Host_CPU,Second; then
+            HWMON_VIRT_TRANSPORT_TESTS=1 python3 -m unittest discover -s tests -p test_transport.py -v
             transport_result=$?
-            if rmmod k10temp_virt && [ "$transport_result" -eq 0 ]; then
-                echo KTV_VM_TESTS_PASSED
+            if rmmod hwmon_virt && [ "$transport_result" -eq 0 ]; then
+                echo HMV_VM_TESTS_PASSED
             fi
         fi
     fi
@@ -106,9 +106,9 @@ poweroff -f
                    "-nodefaults", "-display", "none", "-serial", "stdio", "-no-reboot",
                    "-kernel", str(args.kernel.resolve()), "-initrd", str(initrd),
                    "-append", "console=ttyS0 rdinit=/init panic=-1 quiet",
-                   "-device", "virtio-serial-pci,id=ktvserial",
-                   "-chardev", f"socket,id=ktvchar,path={work}/host.sock,server=on,wait=off",
-                   "-device", "virtserialport,bus=ktvserial.0,nr=1,chardev=ktvchar,name=org.k10temp-virt.0"]
+                   "-device", "virtio-serial-pci,id=hmvserial",
+                   "-chardev", f"socket,id=hmvchar,path={work}/host.sock,server=on,wait=off",
+                   "-device", "virtserialport,bus=hmvserial.0,nr=1,chardev=hmvchar,name=org.hwmon-virt.0"]
         (work / "temp1").write_text("42625\n")
         (work / "temp2").write_text("-5000\n")
         host = None
@@ -157,9 +157,9 @@ poweroff -f
                     pending += data
                     while b"\n" in pending:
                         line, pending = pending.split(b"\n", 1)
-                        if line.strip() == b"KTV_STOP_HOST":
+                        if line.strip() == b"HMV_STOP_HOST":
                             stop_host()
-                        elif line.strip() == b"KTV_START_HOST":
+                        elif line.strip() == b"HMV_START_HOST":
                             start_host()
             result = vm.wait(timeout=5)
         finally:
@@ -171,7 +171,7 @@ poweroff -f
             stop_host()
             print("".join(host_logs))
             print(output.decode(errors="replace"))
-        if result or b"KTV_VM_TESTS_PASSED" not in output:
+        if result or b"HMV_VM_TESTS_PASSED" not in output:
             raise SystemExit("isolated VM tests failed")
 
 

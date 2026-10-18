@@ -5,8 +5,8 @@ After=systemd-modules-load.service
 
 [Service]
 Type=simple
-ExecStartPre=/sbin/modprobe k10temp_virt
-ExecStart=/usr/local/libexec/k10temp-virt guest
+ExecStartPre=/sbin/modprobe hwmon_virt
+ExecStart=/usr/local/libexec/hwmon-virt guest
 Restart=on-failure
 RestartSec=2
 NoNewPrivileges=yes

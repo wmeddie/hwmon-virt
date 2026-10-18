@@ -1,6 +1,7 @@
 # Manual installation
 
-These are the individual steps performed by the [install scripts](../README.md#installation).
+These are the individual steps performed by the [install scripts](../README.md#installation)
+on a Proxmox VE host and a Linux guest.
 Run commands from the project directory on the indicated machine. Examples use
 VM **101**; substitute your guest's ID. For an existing installation, follow
 [Upgrading](../README.md#upgrading).
@@ -11,7 +12,7 @@ Copy this project onto the Proxmox host, then install just the Python program:
 
 ```sh
 sudo make install-tools
-/usr/local/libexec/k10temp-virt list
+/usr/local/libexec/hwmon-virt list
 ```
 
 `list` prints selectors and their current paths, for example:
@@ -27,7 +28,7 @@ If more than one source matches, it reports unavailable; choose an explicit
 absolute input path for that case, and ensure it remains stable. An attribute
 name such as `k10temp:temp1_input` is also accepted.
 
-For an example VM **101**, create `/etc/k10temp-virt/host-101.json`:
+For an example VM **101**, create `/etc/hwmon-virt/host-101.json`:
 
 ```json
 {
@@ -46,7 +47,7 @@ in `/etc/pve/qemu-server/101.conf`, or add an entry if it has none. Keep this on
 one line, replace `101` with your VM ID, and preserve unrelated arguments:
 
 ```text
-args: -device virtio-serial-pci,id=ktvserial -chardev socket,id=ktvchar,path=/run/qemu-server/101.k10temp-virt.sock,server=on,wait=off -device virtserialport,bus=ktvserial.0,nr=1,chardev=ktvchar,name=org.k10temp-virt.0
+args: -device virtio-serial-pci,id=hmvserial -chardev socket,id=hmvchar,path=/run/qemu-server/101.hwmon-virt.sock,server=on,wait=off -device virtserialport,bus=hmvserial.0,nr=1,chardev=hmvchar,name=org.hwmon-virt.0
 ```
 
 This adds its own controller and port, independent of the QEMU guest agent.
@@ -55,23 +56,21 @@ socket and parent directory should remain accessible only to the intended host
 administrator/service. No TCP port or guest network configuration is involved.
 
 Inspect the resulting command with `qm showcmd 101 --pretty`, then start the VM.
-The guest should have `/dev/virtio-ports/org.k10temp-virt.0`. Device changes require
+The guest should have `/dev/virtio-ports/org.hwmon-virt.0`. Device changes require
 a full VM stop/start; restarting a service or rebooting within the guest is not
 sufficient to recreate the QEMU command line.
 
 Install and start the host service:
 
 ```sh
-sudo install -Dm644 systemd/k10temp-virt-host@.service \
-  /etc/systemd/system/k10temp-virt-host@.service
+sudo install -Dm644 systemd/hwmon-virt-host@.service \
+  /etc/systemd/system/hwmon-virt-host@.service
 sudo systemctl daemon-reload
-sudo systemctl enable --now k10temp-virt-host@101
+sudo systemctl enable --now hwmon-virt-host@101
 ```
 
 The example service uses root to connect to Proxmox's root-owned QEMU socket.
 It only reads configured temperature files and serves values over that socket.
-Outside Proxmox, the same QEMU arguments and `host --socket PATH --sensor
-CHIP:LABEL` command work; choose your own socket path and service configuration.
 For multiple VMs, use a separate channel/socket and host service per VM. Live
 migration/HA of the custom channel is not managed by this project; arrange the
 service/configuration on each target host before moving the VM.
@@ -81,29 +80,29 @@ service/configuration on each target host before moving the VM.
 For a one-time trial after building:
 
 ```sh
-sudo insmod ./k10temp_virt.ko
+sudo insmod ./hwmon_virt.ko
 sudo python3 hwmon_virt.py guest
 ```
 
 From another terminal, run the **real** `sensors` command, or read the new
 `temp1_input` under `/sys/class/hwmon/`. The bridge must be running; otherwise
-the sensor returns a read error. Stop the bridge before `sudo rmmod k10temp_virt`.
+the sensor returns a read error. Stop the bridge before `sudo rmmod hwmon_virt`.
 
 For persistent installation with DKMS installed:
 
 ```sh
-sudo install -d /usr/src/k10temp-virt-0.1.0
-sudo install -m644 k10temp_virt.c k10temp_virt_internal.h protocol.h Kbuild Makefile dkms.conf \
-  /usr/src/k10temp-virt-0.1.0/
-sudo dkms add -m k10temp-virt -v 0.1.0
-sudo dkms build -m k10temp-virt -v 0.1.0
-sudo dkms install -m k10temp-virt -v 0.1.0
+sudo install -d /usr/src/hwmon-virt-0.1.0
+sudo install -m644 hwmon_virt.c hwmon_virt_internal.h protocol.h Kbuild Makefile dkms.conf \
+  /usr/src/hwmon-virt-0.1.0/
+sudo dkms add -m hwmon-virt -v 0.1.0
+sudo dkms build -m hwmon-virt -v 0.1.0
+sudo dkms install -m hwmon-virt -v 0.1.0
 sudo make install-tools
-sudo install -Dm644 config/k10temp-virt.conf /etc/modprobe.d/k10temp-virt.conf
-sudo install -Dm644 systemd/k10temp-virt-guest.service \
-  /etc/systemd/system/k10temp-virt-guest.service
+sudo install -Dm644 config/hwmon-virt.conf /etc/modprobe.d/hwmon-virt.conf
+sudo install -Dm644 systemd/hwmon-virt-guest.service \
+  /etc/systemd/system/hwmon-virt-guest.service
 sudo systemctl daemon-reload
-sudo systemctl enable --now k10temp-virt-guest
+sudo systemctl enable --now hwmon-virt-guest
 ```
 
 Use your distribution's DKMS module-signing/key-enrollment procedure if the
@@ -123,7 +122,7 @@ All module parameters are set at load time:
 For host sources `["k10temp:Tctl", "k10temp:Tccd1"]`, configure two guest labels:
 
 ```text
-options k10temp_virt sensor_name=k10temp labels=Host_CPU,Host_CCD1 cache_ms=100 timeout_ms=1000
+options hwmon_virt sensor_name=k10temp labels=Host_CPU,Host_CCD1 cache_ms=100 timeout_ms=1000
 ```
 
 The host export count/order and guest label count/order must match. Each channel
@@ -146,7 +145,7 @@ controlled by the consuming application; this module supplies temperature only.
 
 The default hwmon name is `k10temp` for CPU monitor compatibility. This is a
 compatibility name, not the real AMD hardware driver. The module is independently
-named `k10temp_virt`; its default channel label is `Host CPU`.
+named `hwmon_virt`; its default channel label is `Host CPU`.
 Resources 1.10.2 recognizes `k10temp`, `coretemp`, and `zenpower` by name. Other
 applications have their own selection rules; a normal hwmon device does not
 guarantee every application's CPU field will select it. Put the CPU source first
@@ -161,7 +160,7 @@ and uses `qm set` to add the dedicated channel. Existing QEMU arguments, includi
 pending arguments, are preserved. A configuration digest guards against concurrent
 VM edits. A complete existing channel is reused; partial, duplicate, or customized
 channels are rejected for manual reconciliation. Full VM configuration backups
-are saved under `/var/backups/k10temp-virt/`; changed configuration and service
+are saved under `/var/backups/hwmon-virt/`; changed configuration and service
 files get adjacent `.bak.*` copies. Generated installations of the bridge, DKMS
 sources, and build records are replaced without creating backup copies.
 The VM is never stopped or started by the installer.
@@ -171,24 +170,16 @@ in place so you can correct the error and rerun them. The guest installer
 preserves existing modprobe options and rebuilds DKMS sources when they change.
 It leaves a loaded module in place until you reload it or reboot.
 
-## Troubleshooting and removal
+## Troubleshooting
 
 - Missing virtio port: check the QEMU arguments and fully stop/start the VM.
 - `ENODATA` before the bridge starts is expected. Check `systemctl status
-  k10temp-virt-guest` and `journalctl -u k10temp-virt-guest`.
-- Host source errors: run `k10temp-virt list` on the host and check
-  `journalctl -u k10temp-virt-host@101`. `--verbose` before the subcommand adds
+  hwmon-virt-guest` and `journalctl -u hwmon-virt-guest`.
+- Host source errors: run `hwmon-virt list` on the host and check
+  `journalctl -u hwmon-virt-host@101`. `--verbose` before the subcommand adds
   details about missing sources and expired requests.
 - `EBUSY` opening the bridge: another bridge process already has it open.
 - Resources stays at N/A: restart it after the bridge is available, confirm the
   `k10temp` name and a readable temperature file, and check sandbox access to sysfs.
 
-To remove the guest installation, stop/disable its service, unload
-`k10temp_virt`, and run `dkms remove -m k10temp-virt -v 0.1.0 --all`. Remove its
-service, modprobe configuration, `/usr/src/k10temp-virt-0.1.0`, and installed
-`/usr/local/libexec/k10temp-virt` if unused. The guest installer's build records
-under `/var/lib/k10temp-virt/` can also be removed. On the host, stop/disable the
-corresponding service, remove its configuration and only this project's QEMU
-arguments, then fully stop/start the VM. Run `systemctl daemon-reload` after
-removing unit files.
-
+For removal, use the [uninstall scripts](uninstall.md).

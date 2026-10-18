@@ -14,4 +14,4 @@ clean:
 test:
 	$(PYTHON) -m unittest discover -s tests -v
 install-tools:
-	install -Dm755 hwmon_virt.py $(DESTDIR)$(PREFIX)/libexec/k10temp-virt
+	install -Dm755 hwmon_virt.py $(DESTDIR)$(PREFIX)/libexec/hwmon-virt

@@ -17,9 +17,9 @@ import socket
 import struct
 import time
 
-LOG = logging.getLogger("k10temp-virt")
+LOG = logging.getLogger("hwmon-virt")
 VERSION = "0.1.0"
-MAGIC = b"KTV1"
+MAGIC = b"HMV1"
 PACKET = struct.Struct("<4sQIii")
 MIN_TEMP, MAX_TEMP = -273150, 1000000
 MAX_CHANNELS = 16
@@ -274,8 +274,8 @@ def main():
     source.add_argument("--config", type=Path, help='JSON file containing {"sensors": [...]}')
     host.add_argument("--sysfs-root", default="/sys/class/hwmon")
     guest = sub.add_parser("guest", help="bridge the kernel device to a virtio-serial port")
-    guest.add_argument("--device", default="/dev/k10temp-virt")
-    guest.add_argument("--port", default="/dev/virtio-ports/org.k10temp-virt.0")
+    guest.add_argument("--device", default="/dev/hwmon-virt")
+    guest.add_argument("--port", default="/dev/virtio-ports/org.hwmon-virt.0")
     guest.add_argument("--timeout", type=positive_seconds, default=0.5,
                        help="response timeout, below module timeout_ms (default 0.5 seconds)")
     args = parser.parse_args()

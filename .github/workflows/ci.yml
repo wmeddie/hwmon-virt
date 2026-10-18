@@ -61,7 +61,7 @@ jobs:
         run: make -j2 KDIR="/lib/modules/$TEST_KERNEL/build"
       - name: Exercise the installer source set through DKMS
         run: |
-          K10TEMP_VIRT_DKMS_TESTS=1 K10TEMP_VIRT_TEST_KERNEL="$TEST_KERNEL" \
+          HWMON_VIRT_DKMS_TESTS=1 HWMON_VIRT_TEST_KERNEL="$TEST_KERNEL" \
             /usr/bin/python3 -m unittest discover -s tests -p test_dkms.py -v
       - name: Run real module and transport tests in QEMU
         run: /usr/bin/python3 tests/run_vm.py build/vmlinuz

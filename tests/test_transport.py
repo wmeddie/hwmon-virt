@@ -12,12 +12,12 @@ import time
 import unittest
 
 
-@unittest.skipUnless(os.environ.get("K10TEMP_VIRT_TRANSPORT_TESTS") == "1",
+@unittest.skipUnless(os.environ.get("HWMON_VIRT_TRANSPORT_TESTS") == "1",
                      "requires the disposable VM and real virtio-serial channel")
 class TransportTests(unittest.TestCase):
     def setUp(self):
         self.hwmon = next(p for p in Path("/sys/class/hwmon").glob("hwmon*")
-                          if "k10temp-virt" in str(p.resolve()))
+                          if "hwmon-virt" in str(p.resolve()))
         self.bridge = None
         self.log = tempfile.TemporaryFile(mode="w+")
         self.addCleanup(self.log.close)
@@ -32,7 +32,7 @@ class TransportTests(unittest.TestCase):
         while time.monotonic() < deadline:
             self.assertIsNone(self.bridge.poll(), "guest bridge exited")
             try:
-                fd = os.open("/dev/k10temp-virt", os.O_RDWR | os.O_NONBLOCK)
+                fd = os.open("/dev/hwmon-virt", os.O_RDWR | os.O_NONBLOCK)
             except OSError as exc:
                 if exc.errno == errno.EBUSY:
                     return  # bridge owns both devices and is ready for reads
@@ -55,7 +55,7 @@ class TransportTests(unittest.TestCase):
     def test_host_disconnect_fails_fast_and_recovers(self):
         self.assertEqual(int((self.hwmon / "temp1_input").read_text()), 42625)
         self.stop_bridge()
-        print("\nKTV_STOP_HOST", flush=True)
+        print("\nHMV_STOP_HOST", flush=True)
         try:
             # Synchronize with the real virtio host-close event, not a guessed sleep.
             fd = os.open("/dev/vport0p1", os.O_RDWR | os.O_NONBLOCK)
@@ -81,7 +81,7 @@ class TransportTests(unittest.TestCase):
             self.assertEqual(self.log.read().count("WARNING bridge unavailable:"), 1)
             print(f"Disconnected read maximum: {max(durations):.4f}s", flush=True)
         finally:
-            print("\nKTV_START_HOST", flush=True)
+            print("\nHMV_START_HOST", flush=True)
         deadline = time.monotonic() + 6
         while time.monotonic() < deadline:
             try:
