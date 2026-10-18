@@ -68,7 +68,7 @@ def main():
         for library in libraries:
             copy(library)
         copy(project / "k10temp_virt.ko", "/k10temp_virt.ko")
-        copy(project / "k10temp_virt.py", "/project/k10temp_virt.py")
+        copy(project / "hwmon_virt.py", "/project/hwmon_virt.py")
         for test in (project / "tests").glob("test_*.py"):
             if test.name in ("test_install.py", "test_vm_runner.py"):
                 continue  # Host-side tool/installer fixtures run via make test.
@@ -118,7 +118,7 @@ poweroff -f
             nonlocal host
             if host is not None:
                 raise RuntimeError("test host is already running")
-            host = subprocess.Popen([sys.executable, str(project / "k10temp_virt.py"),
+            host = subprocess.Popen([sys.executable, str(project / "hwmon_virt.py"),
                                      "host", "--socket", str(work / "host.sock"),
                                      "--sensor", str(work / "temp1"), "--sensor", str(work / "temp2")],
                                     stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)

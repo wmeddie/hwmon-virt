@@ -11,7 +11,7 @@ import threading
 import time
 import unittest
 
-import k10temp_virt as kv
+import hwmon_virt as kv
 
 
 @unittest.skipUnless(os.environ.get("K10TEMP_VIRT_KERNEL_TESTS") == "1",

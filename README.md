@@ -45,7 +45,7 @@ should run as root; guest installation commands use `sudo`.
 List the available temperature sensors:
 
 ```sh
-python3 k10temp_virt.py list
+python3 hwmon_virt.py list
 ```
 
 Choose the sensor you want to share and pass its name to the installer. For

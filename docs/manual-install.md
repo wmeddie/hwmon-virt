@@ -82,7 +82,7 @@ For a one-time trial after building:
 
 ```sh
 sudo insmod ./k10temp_virt.ko
-sudo python3 k10temp_virt.py guest
+sudo python3 hwmon_virt.py guest
 ```
 
 From another terminal, run the **real** `sensors` command, or read the new

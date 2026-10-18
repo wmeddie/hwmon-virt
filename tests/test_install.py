@@ -224,14 +224,14 @@ class InstallerTests(unittest.TestCase):
 
 class ArgumentTests(unittest.TestCase):
     def test_release_versions_match_and_cli_reports_version(self):
-        from k10temp_virt import VERSION
+        from hwmon_virt import VERSION
 
         _, package_version = installer.package_identity((installer.PROJECT / "dkms.conf").read_text())
         module_version = re.search(r'MODULE_VERSION\("([^"]+)"\)',
                                    (installer.PROJECT / "k10temp_virt.c").read_text()).group(1)
         self.assertEqual(package_version, VERSION)
         self.assertEqual(module_version, VERSION)
-        output = subprocess.check_output([sys.executable, str(installer.PROJECT / "k10temp_virt.py"),
+        output = subprocess.check_output([sys.executable, str(installer.PROJECT / "hwmon_virt.py"),
                                           "--version"], text=True)
         self.assertEqual(output.strip(), f"hwmon-virt {VERSION}")
 

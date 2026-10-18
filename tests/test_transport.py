@@ -25,7 +25,7 @@ class TransportTests(unittest.TestCase):
         self.start_bridge()
 
     def start_bridge(self):
-        program = Path(__file__).resolve().parent.parent / "k10temp_virt.py"
+        program = Path(__file__).resolve().parent.parent / "hwmon_virt.py"
         self.bridge = subprocess.Popen([sys.executable, str(program), "guest", "--port", "/dev/vport0p1"],
                                        stdout=subprocess.DEVNULL, stderr=self.log)
         deadline = time.monotonic() + 3

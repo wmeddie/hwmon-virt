@@ -16,7 +16,7 @@ import tempfile
 
 PROJECT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT))
-from k10temp_virt import SensorStore  # noqa: E402
+from hwmon_virt import SensorStore  # noqa: E402
 
 PROGRAM = "/usr/local/libexec/k10temp-virt"
 PORT = "/dev/virtio-ports/org.k10temp-virt.0"
@@ -125,14 +125,14 @@ def read_sources(names):
 
 
 def install_service(system, sources, name):
-    system.write(PROGRAM, sources["k10temp_virt.py"], 0o755, backup=False)
+    system.write(PROGRAM, sources["hwmon_virt.py"], 0o755, backup=False)
     system.write("/etc/systemd/system/" + name, sources["systemd/" + name])
 
 
 def install_host(system, args):
     system.require("qm", "systemctl")
     unit = "k10temp-virt-host@.service"
-    sources = read_sources(["k10temp_virt.py", "systemd/" + unit])
+    sources = read_sources(["hwmon_virt.py", "systemd/" + unit])
     vmid = str(args.vmid)
     vm_config = system.path(f"/etc/pve/qemu-server/{vmid}.conf")
     original = vm_config.read_bytes()  # also verifies the VM belongs to this node
@@ -158,14 +158,14 @@ def install_host(system, args):
         sensors = saved["sensors"]
     else:
         raise ValueError("first install requires --sensor CHIP:LABEL; "
-                         "list choices with: python3 k10temp_virt.py list")
+                         "list choices with: python3 hwmon_virt.py list")
     store = SensorStore(sensors, system.path("/sys/class/hwmon"))
     for channel, selector in enumerate(sensors):
         try:
             value = store.read(channel)
         except (OSError, ValueError) as exc:
             raise ValueError(f"cannot read {selector!r}: {exc}; "
-                             "list choices with: python3 k10temp_virt.py list") from exc
+                             "list choices with: python3 hwmon_virt.py list") from exc
         print(f"Channel {channel + 1}: {selector} = {value / 1000:g} °C", flush=True)
 
     install_service(system, sources, unit)
@@ -213,7 +213,7 @@ def install_guest(system, _args):
         raise ValueError(f"missing build headers for {kernel}; on Ubuntu/Debian install "
                          f"the matching linux-headers-{kernel} package")
     unit = "k10temp-virt-guest.service"
-    sources = read_sources(MODULE_FILES + ["k10temp_virt.py", "systemd/" + unit,
+    sources = read_sources(MODULE_FILES + ["hwmon_virt.py", "systemd/" + unit,
                                           "config/k10temp-virt.conf"])
     name, version = package_identity(sources["dkms.conf"].decode())
     loaded = system.path("/sys/module/k10temp_virt").exists()

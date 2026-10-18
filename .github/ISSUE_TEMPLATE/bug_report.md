@@ -12,7 +12,7 @@ assignees: ""
 
 **Environment**
 
-- Project version (`python3 k10temp_virt.py --version`) or commit:
+- Project version (`python3 hwmon_virt.py --version`) or commit:
 - Host distribution and hypervisor version:
 - Guest distribution and kernel (`uname -r`):
 - Python version:

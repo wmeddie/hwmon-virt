@@ -11,7 +11,7 @@ import time
 import unittest
 from unittest import mock
 
-import k10temp_virt as kv
+import hwmon_virt as kv
 
 
 class BridgeTests(unittest.TestCase):
