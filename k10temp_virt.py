@@ -7,6 +7,7 @@ import contextlib
 import errno
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import re
@@ -21,6 +22,24 @@ MAGIC = b"KTV1"
 PACKET = struct.Struct("<4sQIii")
 MIN_TEMP, MAX_TEMP = -273150, 1000000
 MAX_CHANNELS = 16
+REPLY_STATUSES = {0, -errno.EIO, -errno.ENODATA, -errno.EPROTO, -errno.ETIMEDOUT, -errno.ENOTCONN}
+
+
+class ConnectionLog:
+    """Report transitions after communication, not merely after opening an fd."""
+
+    def __init__(self):
+        self.online = None
+
+    def connected(self):
+        if self.online is not True:
+            LOG.info("bridge communication established")
+        self.online = True
+
+    def disconnected(self, error):
+        log = LOG.debug if self.online is False else LOG.warning
+        log("bridge unavailable: %s; retrying in 2 seconds", error)
+        self.online = False
 
 
 class Frame:
@@ -48,16 +67,28 @@ class FramedFD:
         self.fd = fd
         self.buffer = bytearray()
         os.set_blocking(fd, False)
+        self.poller = select.poll()
+        self.poller.register(fd, 0)
 
     def wait(self, writing, deadline):
         remaining = None if deadline is None else deadline - time.monotonic()
         if remaining is not None and remaining <= 0:
             raise TimeoutError("bridge response deadline expired")
-        readable, writable, _ = select.select(
-            [] if writing else [self.fd], [self.fd] if writing else [], [], remaining
-        )
-        if not (readable or writable):
+        wanted = select.POLLOUT if writing else select.POLLIN
+        self.poller.modify(self.fd, wanted)
+        events = self.poller.poll(None if remaining is None else math.ceil(remaining * 1000))
+        if not events:
             raise TimeoutError("bridge response deadline expired")
+        flags = events[0][1]
+        if flags & select.POLLNVAL:
+            raise OSError(errno.EBADF, "invalid bridge descriptor")
+        # POLLIN may accompany HUP: drain the final reply before returning EOF.
+        if not writing and flags & select.POLLIN:
+            return
+        if flags & select.POLLHUP:
+            raise EOFError("bridge peer disconnected")
+        if flags & select.POLLERR or not flags & wanted:
+            raise OSError(errno.EIO, "bridge descriptor error")
 
     def receive(self, deadline=None):
         while True:
@@ -107,7 +138,8 @@ def discover(root):
         for path in inputs:
             try:
                 label = path.with_name(path.name.replace("_input", "_label")).read_text().strip()
-            except FileNotFoundError:
+            except OSError as exc:
+                LOG.debug("label unavailable for %s: %s", path, exc)
                 label = path.name
             yield name, label, path.resolve()
 
@@ -151,7 +183,7 @@ class SensorStore:
         return value
 
 
-def serve_host(stream, sensors):
+def serve_host(stream, sensors, connected=None):
     while True:
         request = stream.receive()  # no timer and no sensor reads while idle
         if request.status or request.value:
@@ -164,6 +196,8 @@ def serve_host(stream, sensors):
                 LOG.debug("source unavailable: %s", exc)
                 reply = Frame(request.sequence, request.channel, -errno.ENODATA)
         stream.send(reply, time.monotonic() + 1.0)
+        if connected:
+            connected()
 
 
 def transact(stream, request, timeout):
@@ -177,15 +211,19 @@ def transact(stream, request, timeout):
             reply.status == 0 and not MIN_TEMP <= reply.value <= MAX_TEMP
         ):
             return Frame(request.sequence, request.channel, -errno.EPROTO)
+        if reply.status not in REPLY_STATUSES:
+            return Frame(request.sequence, request.channel, -errno.EIO)
         return reply
 
 
-def serve_guest(device, port, timeout):
+def serve_guest(device, port, timeout, connected=None):
     while True:
         request = device.receive()  # kernel wakes us only on an uncached hwmon read
         disconnected = False
         try:
             reply = transact(port, request, timeout)
+            if connected:
+                connected()
         except TimeoutError:
             reply = Frame(request.sequence, request.channel, -errno.ETIMEDOUT)
         except (EOFError, OSError):
@@ -259,20 +297,21 @@ def main():
             store = SensorStore(sensors, args.sysfs_root)
         except (OSError, ValueError) as exc:
             parser.error(str(exc))
+    connection = ConnectionLog()
     while True:
         try:
             if args.mode == "host":
                 with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
                     sock.settimeout(1.0)
                     sock.connect(args.socket)
-                    LOG.info("connected to %s", args.socket)
-                    serve_host(FramedFD(sock.fileno()), store)
+                    LOG.debug("opened connection to %s", args.socket)
+                    serve_host(FramedFD(sock.fileno()), store, connection.connected)
             else:
                 with open_device(args.port) as port, open_device(args.device) as device:
-                    LOG.info("connected to %s and %s", args.port, args.device)
-                    serve_guest(device, port, args.timeout)
+                    LOG.debug("opened %s and %s", args.port, args.device)
+                    serve_guest(device, port, args.timeout, connection.connected)
         except (OSError, EOFError) as exc:
-            LOG.warning("bridge unavailable: %s; retrying in 2 seconds", exc)
+            connection.disconnected(exc)
             time.sleep(2)  # connection recovery only; never polls sensor values
 
 

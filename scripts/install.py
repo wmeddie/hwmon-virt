@@ -20,8 +20,9 @@ from k10temp_virt import SensorStore  # noqa: E402
 
 PROGRAM = "/usr/local/libexec/k10temp-virt"
 PORT = "/dev/virtio-ports/org.k10temp-virt.0"
-MODULE_FILES = ["k10temp_virt.c", "protocol.h", "Kbuild", "Makefile", "dkms.conf", "LICENSE",
-                "COPYING", "LICENSES/exceptions/Linux-syscall-note"]
+MODULE_FILES = ["k10temp_virt.c", "k10temp_virt_internal.h", "protocol.h", "Kbuild",
+                "Makefile", "dkms.conf", "LICENSE", "COPYING",
+                "LICENSES/exceptions/Linux-syscall-note"]
 
 
 class System:
@@ -59,7 +60,7 @@ class System:
             stream.write(path.read_bytes() if data is None else data)
         print(f"Backup: {name}", flush=True)
 
-    def write(self, name, data, mode=0o644, preserve=False):
+    def write(self, name, data, mode=0o644, preserve=False, backup=True):
         path = self.path(name)
         if path.is_symlink():
             raise ValueError(f"refusing to replace symlink: {path}")
@@ -69,7 +70,8 @@ class System:
                 return False
             if path.read_bytes() == data and path.stat().st_mode & 0o777 == mode:
                 return False
-            self.backup(path)
+            if backup:
+                self.backup(path)
         print(f"Install {path} (mode {mode:04o})", flush=True)
         if self.dry_run:
             return True
@@ -123,7 +125,7 @@ def read_sources(names):
 
 
 def install_service(system, sources, name):
-    system.write(PROGRAM, sources["k10temp_virt.py"], 0o755)
+    system.write(PROGRAM, sources["k10temp_virt.py"], 0o755, backup=False)
     system.write("/etc/systemd/system/" + name, sources["systemd/" + name])
 
 
@@ -176,6 +178,7 @@ def install_host(system, args):
         print("QEMU channel is already configured.", flush=True)
     if not system.dry_run:
         system.run("qm", "showcmd", vmid, "--pretty", read_only=True)
+        print("QEMU command generation succeeded. Inspect with: qm showcmd " + vmid + " --pretty")
     system.run("systemctl", "daemon-reload")
     instance = f"k10temp-virt-host@{vmid}.service"
     system.run("systemctl", "enable", instance)
@@ -190,6 +193,14 @@ def install_host(system, args):
           "A reboot within the guest does not recreate the QEMU channel.")
 
 
+def package_identity(config):
+    settings = dict(re.findall(r'^PACKAGE_(NAME|VERSION)="([A-Za-z0-9_.+-]+)"$',
+                               config, re.MULTILINE))
+    if set(settings) != {"NAME", "VERSION"}:
+        raise ValueError("cannot read package name/version from dkms.conf")
+    return settings["NAME"], settings["VERSION"]
+
+
 def install_guest(system, _args):
     system.require("dkms", "make", "cc", "modprobe", "systemctl")
     kernel = os.uname().release
@@ -199,11 +210,7 @@ def install_guest(system, _args):
     unit = "k10temp-virt-guest.service"
     sources = read_sources(MODULE_FILES + ["k10temp_virt.py", "systemd/" + unit,
                                           "config/k10temp-virt.conf"])
-    settings = dict(re.findall(r'^PACKAGE_(NAME|VERSION)="([A-Za-z0-9_.+-]+)"$',
-                               sources["dkms.conf"].decode(), re.MULTILINE))
-    if set(settings) != {"NAME", "VERSION"}:
-        raise ValueError("cannot read package name/version from dkms.conf")
-    name, version = settings["NAME"], settings["VERSION"]
+    name, version = package_identity(sources["dkms.conf"].decode())
     loaded = system.path("/sys/module/k10temp_virt").exists()
     fingerprint = hashlib.sha256()
     for filename in MODULE_FILES:
@@ -212,14 +219,14 @@ def install_guest(system, _args):
     signature = (fingerprint.hexdigest() + "\n").encode()
     changed = not system.path(stamp).exists() or system.path(stamp).read_bytes() != signature
     for filename in MODULE_FILES:
-        system.write(f"/usr/src/{name}-{version}/{filename}", sources[filename])
+        system.write(f"/usr/src/{name}-{version}/{filename}", sources[filename], backup=False)
     # build auto-adds an unregistered module. Force rebuilds handle source changes
     # within the same version; installation never unloads a running module.
     force = ["--force"] if changed else []
     system.run("dkms", "build", "-m", name, "-v", version, "-k", kernel, *force)
     system.run("dkms", "install", "-m", name, "-v", version, "-k", kernel, *force)
     # Record success only after installation, so interrupted updates rebuild on retry.
-    system.write(stamp, signature)
+    system.write(stamp, signature, backup=False)
     install_service(system, sources, unit)
     system.write("/etc/modprobe.d/k10temp-virt.conf", sources["config/k10temp-virt.conf"],
                  preserve=True)

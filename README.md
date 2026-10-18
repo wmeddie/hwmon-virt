@@ -9,7 +9,9 @@ A **100 ms in-memory cache** shares recent readings between applications.
 
 There is no SSH, network listener, periodic temperature collector, or subprocess
 per sample. When nobody reads a temperature, the services block waiting for work.
-Disconnected services retry their connection every two seconds.
+Disconnected services retry their connection every two seconds. Each service
+logs one warning per outage; repeated failures are logged only with `--verbose`.
+Successful communication resets this suppression and logs recovery.
 
 ```text
 Resources / sensors / other hwmon readers
@@ -88,8 +90,10 @@ and uses `qm set` to add the dedicated channel. Existing QEMU arguments, includi
 pending arguments, are preserved. A configuration digest guards against concurrent
 VM edits. A complete existing channel is reused; partial, duplicate, or customized
 channels are rejected for manual reconciliation. Full VM configuration backups
-are saved under `/var/backups/k10temp-virt/`; changed installed files get adjacent
-`.bak.*` copies. The VM is never stopped or started by the installer.
+are saved under `/var/backups/k10temp-virt/`; changed configuration and service
+files get adjacent `.bak.*` copies. Generated installations of the bridge, DKMS
+sources, and build records are replaced without creating backup copies.
+The VM is never stopped or started by the installer.
 
 Repeat `--sensor` for additional channels and configure matching guest labels as
 described below. On subsequent host installs, omit `--sensor` to preserve the
@@ -120,8 +124,11 @@ make test
 ```
 
 `make` builds `k10temp_virt.ko` with extra compiler warnings. `make test` runs
-unprivileged transport/source and installer fixture tests; kernel tests are
-skipped outside the disposable VM. To target another installed kernel:
+unprivileged transport/source, installer, and test-runner checks. It also compiles
+and exercises the module's completion-result helper to cover replies accepted
+at the timeout boundary and signal interruptions deterministically; this checks
+the decision logic, not a forced kernel scheduling interleaving. Actual-module
+tests are skipped outside the disposable VM. To target another installed kernel:
 
 ```sh
 make KDIR=/lib/modules/KERNEL_VERSION/build
@@ -152,21 +159,26 @@ The test runner requires QEMU, a **statically linked BusyBox**, cpio, lm-sensors
 and Python. It boots an ephemeral initramfs with TCG, uses no VM disks or network,
 and removes its temporary files on exit. It tests module loading/unloading,
 cache hits/expiry, simultaneous readers, channel isolation, invalid replies,
-timeouts, and bridge disconnects. It also runs both services over a real QEMU
-virtio-serial channel and checks that the unmodified `sensors -j` discovers the
-device and reports the host fixture values. Never set `K10TEMP_VIRT_KERNEL_TESTS=1` for the
-ordinary test suite on a production machine; that flag is for the test VM.
+error-code filtering, invalid device names, timeouts, and bridge disconnects.
+It also runs both services over a real QEMU virtio-serial channel, stops/restarts
+the fixture host responder to verify prompt failures, warning suppression, and
+automatic recovery, and checks that unmodified `sensors -j` discovers the device
+and reports the fixture values. The `K10TEMP_VIRT_KERNEL_TESTS` and
+`K10TEMP_VIRT_TRANSPORT_TESTS` flags are for the disposable VM only; never enable
+them for the ordinary test suite on a production machine.
 
 Validated on Linux `7.0.0-38-generic`, Python 3.14.4, and QEMU 10.2.1:
-10 userspace tests, 8 actual-module tests, and 2 full virtio-serial/lm-sensors
-tests passed. The kernel sources also passed `checkpatch` without warnings.
-Other kernel versions and a live Proxmox installation have not been tested yet.
+51 distinct tests passed across the local, isolated DKMS, and disposable VM runs:
+16 transport/source tests, 18 installer fixtures, 1 runner check, 1 C completion
+check, 11 actual-module tests, 3 full virtio-serial/lm-sensors tests, and 1 DKMS
+build test. The longest disconnected read in the VM run was 2.1 ms, below the
+300 ms test limit and the former 500 ms timeout. The kernel sources also passed
+`checkpatch` without warnings. Other kernel versions have not been tested.
 
-The installers have 15 additional fixture tests covering configuration preservation,
-repeat runs, dry runs, failures, and channel conflicts. The host installer was
-also dry-run against Proxmox VE 9.2.3; this did not install services or change a VM.
-The isolated build test also passed through DKMS 3.2.2 using the installer source
-set, including the separate `Kbuild` file.
+Installer fixtures cover configuration preservation, repeat runs, dry runs,
+failures, and channel conflicts. The host installer was also dry-run against
+Proxmox VE 9.2.3. The isolated build passed through DKMS 3.2.2 using the installer
+source set. These checks do not install the changes on the running host or guest.
 
 ## Set up the host
 
@@ -256,7 +268,7 @@ For persistent installation with DKMS installed:
 
 ```sh
 sudo install -d /usr/src/k10temp-virt-0.1.0
-sudo install -m644 k10temp_virt.c protocol.h Kbuild Makefile dkms.conf \
+sudo install -m644 k10temp_virt.c k10temp_virt_internal.h protocol.h Kbuild Makefile dkms.conf \
   /usr/src/k10temp-virt-0.1.0/
 sudo dkms add -m k10temp-virt -v 0.1.0
 sudo dkms build -m k10temp-virt -v 0.1.0
@@ -278,7 +290,7 @@ All module parameters are set at load time:
 
 | Parameter | Default | Meaning |
 | --- | --- | --- |
-| `sensor_name` | `k10temp` | Name used by hwmon applications |
+| `sensor_name` | `k10temp` | Nonempty hwmon name; whitespace, `-`, and `*` are rejected |
 | `labels` | `Host CPU` | Comma-separated channel labels, 1–16, up to 64 characters each |
 | `cache_ms` | `100` | Successful reading cache lifetime, 0–60000 ms; 0 disables caching |
 | `timeout_ms` | `1000` | Per-request kernel response timeout, 1–10000 ms |
@@ -299,8 +311,10 @@ Waiting behind another reader can add latency to the per-request timeout.
 
 The guest bridge defaults to a 500 ms transport deadline, shorter than the
 module's 1000 ms deadline. If changing these, keep the bridge's `--timeout`
-below the module's `timeout_ms`. A failed read returns a Linux error, usually
-displayed as unavailable by applications. CPU utilization and graph cadence are
+below the module's `timeout_ms`. A disconnected host fails promptly with
+`ENOTCONN`; reads while the guest bridge reconnects return `ENODATA`. A connected
+but unresponsive host still uses the transport deadline. Applications usually
+display failed reads as unavailable. CPU utilization and graph cadence are
 controlled by the consuming application; this module supplies temperature only.
 
 ## Protocol and implementation
@@ -309,7 +323,11 @@ controlled by the consuming application; this module supplies temperature only.
 bridge, and host. It contains the `KTV1` magic/version, a 64-bit request ID, a
 zero-based channel, a signed status, and a signed millidegree value. Requests
 have zero status/value. Replies echo the ID/channel and carry zero status or
-a negative Linux errno. Accepted temperatures range from −273150 to 1000000 m°C.
+`-EIO`, `-ENODATA`, `-EPROTO`, `-ETIMEDOUT`, or `-ENOTCONN`. Other negative statuses
+in the Linux errno range (−4095 through −1) become `-EIO` at both the guest bridge
+and kernel boundary, preventing kernel-internal restart codes from reaching
+applications. Positive statuses and values below −4095 are malformed.
+Accepted temperatures range from −273150 to 1000000 m°C.
 
 The root-only `/dev/k10temp-virt` accepts exactly one bridge opener. It supports
 blocking/nonblocking reads and poll; each read yields one complete request and
@@ -317,12 +335,16 @@ each write must contain one complete response. Replies are accepted only for
 the currently pending, delivered request, otherwise writes return `ESTALE`.
 Each module load seeds its request counter randomly to avoid matching old
 transport data after a reload. Bridge replies use a separate lock from hwmon
-reads, so a waiting hwmon callback cannot deadlock its responder.
+reads, so a waiting hwmon callback cannot deadlock its responder. A completed
+reply observed under the state lock wins over an expired wait; a wait interrupted
+by a signal retains its interruption result.
 
-The Python stream layer handles fragmented/coalesced frames and discards replies
-with mismatched IDs/channels. After a torn frame or reconnect, a request may
-fail and subsequent reads recover; no stale-data fallback is used. The wire
-format is a small project-specific protocol, not a standard VirtIO sensor device.
+The Python stream layer uses `poll` to detect hangups even when a disconnected
+virtio port is not writable, while draining readable data before reporting EOF.
+It handles fragmented/coalesced frames and discards replies with mismatched
+IDs/channels. After a torn frame or reconnect, a request may fail and subsequent
+reads recover; no stale-data fallback is used. The wire format is a small
+project-specific protocol, not a standard VirtIO sensor device.
 
 ## Troubleshooting and removal
 

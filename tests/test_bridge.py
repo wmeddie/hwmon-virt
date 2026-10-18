@@ -4,10 +4,12 @@ import os
 from pathlib import Path
 import socket
 import struct
+import sys
 import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 
 import k10temp_virt as kv
 
@@ -92,6 +94,39 @@ class BridgeTests(unittest.TestCase):
         with self.assertRaises(EOFError):
             stream.receive(time.monotonic() + 1)
 
+    def test_hangup_without_writability_fails_fast(self):
+        # A pipe with its writer gone has the same HUP-without-POLLOUT shape
+        # as a disconnected virtio port; no socket-specific writability here.
+        reader, writer = os.pipe()
+        self.addCleanup(os.close, reader)
+        os.close(writer)
+        start = time.monotonic()
+        with self.assertRaises(EOFError):
+            kv.FramedFD(reader).send(kv.Frame(1, 0), start + 0.5)
+        self.assertLess(time.monotonic() - start, 0.2)
+
+    def test_buffered_reply_is_delivered_before_hangup(self):
+        left, right = self.pair()
+        os.write(left.fileno(), kv.Frame(8, 0, value=45625).pack())
+        left.close()
+        stream = kv.FramedFD(right.fileno())
+        self.assertEqual(stream.receive(time.monotonic() + 0.5).value, 45625)
+        with self.assertRaises(EOFError):
+            stream.receive(time.monotonic() + 0.5)
+
+    def test_poll_errors_and_invalid_fd_are_reported(self):
+        reader, writer = os.pipe()
+        self.addCleanup(os.close, writer)
+        os.close(reader)
+        with self.assertRaises(OSError):
+            kv.FramedFD(writer).wait(True, time.monotonic() + 0.5)
+        left, right = self.pair()
+        stream = kv.FramedFD(left.fileno())
+        left.close()
+        with self.assertRaises(OSError) as caught:
+            stream.wait(False, time.monotonic() + 0.5)
+        self.assertEqual(caught.exception.errno, errno.EBADF)
+
     def test_sources_use_labels_and_read_fresh_values(self):
         source = self.sensor()
         store = kv.SensorStore(["k10temp:Tctl"], self.root)
@@ -123,6 +158,21 @@ class BridgeTests(unittest.TestCase):
         with self.assertRaises(OSError):
             store.read(0)
         self.assertEqual(store.read(0), 57000)
+
+    def test_bad_label_does_not_break_unrelated_discovery(self):
+        self.sensor()
+        bad = self.sensor("hwmon4", name="unrelated")
+        original = Path.read_text
+        for error in (errno.EIO, errno.EACCES):
+            def read(path, *args, **kwargs):
+                if path == bad.with_name("temp1_label"):
+                    raise OSError(error, "unreadable label")
+                return original(path, *args, **kwargs)
+
+            with self.subTest(error=error), mock.patch.object(Path, "read_text", read):
+                self.assertEqual(kv.SensorStore(["k10temp:Tctl"], self.root).read(0), 52000)
+                self.assertEqual(kv.SensorStore(["unrelated:temp1_input"], self.root).read(0), 52000)
+                self.assertIn(("unrelated", "temp1_input", bad), list(kv.discover(self.root)))
 
     def test_no_reads_until_requested_and_explicit_channels_only(self):
         source = self.sensor()
@@ -195,6 +245,52 @@ class BridgeTests(unittest.TestCase):
         host_thread.join(1)
         self.assertFalse(guest_errors)
         self.assertFalse(host_errors)
+
+    def test_internal_and_unrecognized_error_codes_are_normalized(self):
+        for status in (-512, -513, -514, -516, -517, -529, -errno.EACCES, -4095):
+            with self.subTest(status=status):
+                left, right = self.pair()
+                os.write(right.fileno(), kv.Frame(1, 0, status).pack())
+                reply = kv.transact(kv.FramedFD(left.fileno()), kv.Frame(1, 0), 0.5)
+                self.assertEqual(reply.status, -errno.EIO)
+        for status in (-errno.ENODATA, -errno.EPROTO, -errno.ETIMEDOUT, -errno.ENOTCONN, -errno.EIO):
+            left, right = self.pair()
+            os.write(right.fileno(), kv.Frame(1, 0, status).pack())
+            self.assertEqual(kv.transact(kv.FramedFD(left.fileno()), kv.Frame(1, 0), 0.5).status,
+                             status)
+
+    def test_retries_log_only_outage_and_real_recovery(self):
+        source = self.sensor()
+        # Opening succeeds on each attempt, but only the third connection carries
+        # a request. Opening alone must not reset outage suppression.
+        class Session:
+            def __init__(self, requests):
+                self.requests = iter(requests)
+
+            def receive(self, *_):
+                try:
+                    return next(self.requests)
+                except StopIteration:
+                    raise EOFError("peer absent") from None
+
+            def send(self, *_):
+                pass
+
+        class StopRetries(Exception):
+            pass
+
+        sessions = [Session([]), Session([]), Session([kv.Frame(1, 0)]), Session([])]
+        with mock.patch.object(sys, "argv", ["bridge", "host", "--socket", "/unused",
+                                               "--sensor", str(source)]), \
+             mock.patch.object(kv.signal, "signal"), \
+             mock.patch.object(kv.socket, "socket"), \
+             mock.patch.object(kv, "FramedFD", side_effect=sessions), \
+             mock.patch.object(kv.time, "sleep", side_effect=[None, None, None, StopRetries]), \
+             self.assertLogs(kv.LOG, level="DEBUG") as logs:
+            with self.assertRaises(StopRetries):
+                kv.main()
+        self.assertEqual(sum(r.levelname == "WARNING" for r in logs.records), 2)
+        self.assertEqual(sum(r.levelname == "INFO" for r in logs.records), 1)
 
 
 if __name__ == "__main__":

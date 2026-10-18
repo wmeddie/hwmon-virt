@@ -171,6 +171,25 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("--force", builds[0])
         self.assertNotEqual(stamp.read_text(), "previous successful build\n")
 
+    def test_derived_files_are_replaced_without_backup_clutter(self):
+        source = self.put("/usr/src/k10temp-virt-0.1.0/k10temp_virt.c", "old source\n")
+        self.put(installer.PROGRAM, "old bridge\n")
+        installer.install_guest(self.system, self.args)
+        self.assertEqual(source.read_bytes(), (installer.PROJECT / "k10temp_virt.c").read_bytes())
+        self.assertFalse(list(source.parent.glob("*.bak.*")))
+        self.assertFalse(list(self.system.path(installer.PROGRAM).parent.glob("*.bak.*")))
+
+    def test_qemu_generation_failure_stops_before_starting_service(self):
+        def fail_showcmd(command, **kwargs):
+            if command[:2] == ("qm", "showcmd"):
+                raise subprocess.CalledProcessError(1, command, stderr="invalid QEMU configuration")
+            return self.run_command(command, **kwargs)
+
+        with mock.patch.object(installer.subprocess, "run", side_effect=fail_showcmd):
+            with self.assertRaises(subprocess.CalledProcessError):
+                installer.install_host(self.system, self.args)
+        self.assertFalse(any(cmd[0] == "systemctl" for cmd in self.commands))
+
     def test_guest_dry_run_and_missing_headers_do_not_write(self):
         self.system.dry_run = True
         before = self.snapshot()
@@ -202,6 +221,14 @@ class InstallerTests(unittest.TestCase):
 
 
 class ArgumentTests(unittest.TestCase):
+    def test_package_metadata_is_parsed_without_executing_shell(self):
+        self.assertEqual(installer.package_identity('PACKAGE_NAME="example"\nPACKAGE_VERSION="1.2"\n'),
+                         ("example", "1.2"))
+        for config in ('PACKAGE_NAME="missing-version"',
+                       'PACKAGE_NAME="$(touch /tmp/not-executed)"\nPACKAGE_VERSION="1.2"'):
+            with self.assertRaises(ValueError):
+                installer.package_identity(config)
+
     def test_existing_channel_is_not_duplicated(self):
         args = installer.merge_args("-no-reboot", 101)
         self.assertEqual(installer.merge_args(args, 101), args)

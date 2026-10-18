@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /* On-demand, userspace-backed temperature sensors. No hardware access here. */
 #include <linux/fs.h>
+#include <linux/ctype.h>
 #include <linux/hwmon.h>
 #include <linux/ktime.h>
 #include <linux/miscdevice.h>
@@ -12,6 +13,7 @@
 #include <linux/wait.h>
 
 #include "protocol.h"
+#include "k10temp_virt_internal.h"
 
 #define MAX_CHANNELS 16
 
@@ -63,7 +65,7 @@ static void invalidate_cache(void)
 static int sensor_read(struct device *dev, enum hwmon_sensor_types type,
 		       u32 attr, int channel, long *value)
 {
-	u64 started = ktime_get_ns();
+	u64 started;
 	long waited;
 	int ret;
 
@@ -77,7 +79,7 @@ static int sensor_read(struct device *dev, enum hwmon_sensor_types type,
 		ret = -ENODATA;
 		goto unlock;
 	}
-	/* Recompute after waiting for a concurrent reader. */
+	/* Start cache age after waiting for a concurrent reader. */
 	started = ktime_get_ns();
 	if (state.cache[channel].valid && cache_ms &&
 	    started - state.cache[channel].acquired_ns <
@@ -106,12 +108,7 @@ static int sensor_read(struct device *dev, enum hwmon_sensor_types type,
 	mutex_lock(&state_lock);
 	state.pending = false;
 	state.queued = false;
-	if (waited < 0)
-		ret = waited;
-	else if (!waited)
-		ret = -ETIMEDOUT;
-	else
-		ret = state.status;
+	ret = ktv_wait_result(waited, state.done, state.status);
 	if (!ret) {
 		*value = state.value;
 		state.cache[channel].value = state.value;
@@ -248,7 +245,7 @@ static ssize_t bridge_write(struct file *file, const char __user *buf,
 	    reply.channel != state.request.channel) {
 		ret = -ESTALE;
 	} else {
-		state.status = status;
+		state.status = ktv_reply_status(status);
 		state.value = value;
 		state.done = true;
 	}
@@ -293,6 +290,12 @@ static int __init k10temp_virt_init(void)
 	static_assert(sizeof(struct ktv_message) == 24);
 	if (!num_labels || cache_ms > 60000 || !timeout_ms || timeout_ms > 10000)
 		return -EINVAL;
+	if (!sensor_name || !sensor_name[0])
+		return -EINVAL;
+	for (i = 0; sensor_name[i]; i++) {
+		if (isspace(sensor_name[i]) || sensor_name[i] == '-' || sensor_name[i] == '*')
+			return -EINVAL;
+	}
 	for (i = 0; i < num_labels; i++) {
 		if (!labels[i][0] || strlen(labels[i]) > 64)
 			return -EINVAL;

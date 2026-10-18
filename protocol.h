@@ -10,7 +10,9 @@
 
 /* Exactly 24 bytes, little endian, identical on 32/64-bit systems.
  * A request has zero status/value. A reply echoes the ID and channel;
- * status is 0 or a negative Linux errno; value is signed millidegrees C.
+ * status is 0, -EIO, -ENODATA, -EPROTO, -ETIMEDOUT, or -ENOTCONN;
+ * other negative Linux errnos are mapped to -EIO by the receiver.
+ * value is signed millidegrees C.
  */
 struct ktv_message {
 	__le32 magic;

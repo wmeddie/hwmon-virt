@@ -11,16 +11,31 @@ import gzip
 import os
 from pathlib import Path
 import re
+import selectors
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
+
+
+def required_tools():
+    names = ("busybox", "cpio", "sensors", "qemu-system-x86_64", "ldd")
+    found = {name: shutil.which(name) for name in names}
+    missing = [name for name, path in found.items() if path is None]
+    if missing:
+        raise ValueError("missing required test tools: " + ", ".join(missing))
+    return found
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("kernel", type=Path)
     args = parser.parse_args()
+    try:
+        binaries = required_tools()
+    except ValueError as exc:
+        parser.error(str(exc))
     project = Path(__file__).resolve().parent.parent
     with tempfile.TemporaryDirectory(prefix="ktv-vm-") as work:
         work = Path(work)
@@ -33,12 +48,12 @@ def main():
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, dest)
 
-        copy(shutil.which("busybox"), "/bin/busybox")
+        copy(binaries["busybox"], "/bin/busybox")
         for name in ("sh", "mount", "insmod", "rmmod", "poweroff", "sleep"):
             (root / "bin" / name).symlink_to("busybox")
         executable = Path(sys.executable).resolve()
         copy(executable, "/usr/bin/python3")
-        sensors = Path(shutil.which("sensors"))
+        sensors = Path(binaries["sensors"])
         copy(sensors, "/usr/bin/sensors")
         if Path("/etc/sensors3.conf").exists():
             copy("/etc/sensors3.conf")
@@ -55,8 +70,8 @@ def main():
         copy(project / "k10temp_virt.ko", "/k10temp_virt.ko")
         copy(project / "k10temp_virt.py", "/project/k10temp_virt.py")
         for test in (project / "tests").glob("test_*.py"):
-            if test.name == "test_install.py":
-                continue  # Installer fixtures run via make test, outside the initramfs.
+            if test.name in ("test_install.py", "test_vm_runner.py"):
+                continue  # Host-side tool/installer fixtures run via make test.
             copy(test, "/project/tests/" + test.name)
         for directory in ("proc", "sys", "dev", "tmp", "run"):
             (root / directory).mkdir(exist_ok=True)
@@ -68,15 +83,12 @@ mount -t devtmpfs devtmpfs /dev
 cd /project
 if insmod /k10temp_virt.ko cache_ms=500 timeout_ms=250 labels=Host_CPU,Second; then
     if K10TEMP_VIRT_KERNEL_TESTS=1 python3 -m unittest discover -s tests -v; then
-        python3 k10temp_virt.py guest --port /dev/vport0p1 --timeout 0.15 &
-        bridge_pid=$!
-        sleep 1
-        K10TEMP_VIRT_TRANSPORT_TESTS=1 python3 -m unittest discover -s tests -p test_transport.py -v
-        transport_result=$?
-        kill "$bridge_pid"
-        wait "$bridge_pid"
-        if rmmod k10temp_virt && [ "$transport_result" -eq 0 ]; then
-            echo KTV_VM_TESTS_PASSED
+        if rmmod k10temp_virt && insmod /k10temp_virt.ko cache_ms=100 labels=Host_CPU,Second; then
+            K10TEMP_VIRT_TRANSPORT_TESTS=1 python3 -m unittest discover -s tests -p test_transport.py -v
+            transport_result=$?
+            if rmmod k10temp_virt && [ "$transport_result" -eq 0 ]; then
+                echo KTV_VM_TESTS_PASSED
+            fi
         fi
     fi
 fi
@@ -99,19 +111,67 @@ poweroff -f
                    "-device", "virtserialport,bus=ktvserial.0,nr=1,chardev=ktvchar,name=org.k10temp-virt.0"]
         (work / "temp1").write_text("42625\n")
         (work / "temp2").write_text("-5000\n")
-        host = subprocess.Popen([sys.executable, str(project / "k10temp_virt.py"),
-                                 "host", "--socket", str(work / "host.sock"),
-                                 "--sensor", str(work / "temp1"), "--sensor", str(work / "temp2")],
-                                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        host = None
+        host_logs = []
+
+        def start_host():
+            nonlocal host
+            if host is not None:
+                raise RuntimeError("test host is already running")
+            host = subprocess.Popen([sys.executable, str(project / "k10temp_virt.py"),
+                                     "host", "--socket", str(work / "host.sock"),
+                                     "--sensor", str(work / "temp1"), "--sensor", str(work / "temp2")],
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+
+        def stop_host():
+            nonlocal host
+            if host is not None:
+                host.terminate()
+                try:
+                    _, log = host.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    host.kill()
+                    _, log = host.communicate()
+                host_logs.append(log)
+                host = None
+
+        output = bytearray()
+        vm = None
         try:
-            result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                    timeout=180, text=True)
+            start_host()
+            vm = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            # The disposable guest emits fixed control markers on its serial
+            # console to stop/restart only this runner's fixture host process.
+            with selectors.DefaultSelector() as selector:
+                selector.register(vm.stdout, selectors.EVENT_READ)
+                deadline = time.monotonic() + 180
+                pending = b""
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0 or not selector.select(remaining):
+                        raise TimeoutError("isolated VM tests exceeded 180 seconds")
+                    data = os.read(vm.stdout.fileno(), 65536)
+                    if not data:
+                        break
+                    output.extend(data)
+                    pending += data
+                    while b"\n" in pending:
+                        line, pending = pending.split(b"\n", 1)
+                        if line.strip() == b"KTV_STOP_HOST":
+                            stop_host()
+                        elif line.strip() == b"KTV_START_HOST":
+                            start_host()
+            result = vm.wait(timeout=5)
         finally:
-            host.terminate()
-            _, host_log = host.communicate(timeout=5)
-            print(host_log)
-        print(result.stdout)
-        if result.returncode or "KTV_VM_TESTS_PASSED" not in result.stdout:
+            if vm is not None:
+                if vm.poll() is None:
+                    vm.kill()
+                vm.wait()
+                vm.stdout.close()
+            stop_host()
+            print("".join(host_logs))
+            print(output.decode(errors="replace"))
+        if result or b"KTV_VM_TESTS_PASSED" not in output:
             raise SystemExit("isolated VM tests failed")
 
 

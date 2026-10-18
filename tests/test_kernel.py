@@ -6,6 +6,7 @@ from pathlib import Path
 import queue
 import select
 import stat
+import subprocess
 import threading
 import time
 import unittest
@@ -129,6 +130,48 @@ class KernelTests(unittest.TestCase):
         result = self.read_async()
         self.respond(46000)
         self.assertEqual(result.get(timeout=2), 46000)
+
+    def test_peer_errors_are_filtered_at_the_kernel_boundary(self):
+        for status in (-512, -513, -514, -516, -517, -529, -errno.EACCES, -4095):
+            with self.subTest(status=status):
+                result = self.read_async()
+                self.respond(status=status)
+                self.assertEqual(result.get(timeout=2).errno, errno.EIO)
+        for status in (-errno.EIO, -errno.ENODATA, -errno.EPROTO, -errno.ETIMEDOUT, -errno.ENOTCONN):
+            result = self.read_async()
+            self.respond(status=status)
+            self.assertEqual(result.get(timeout=2).errno, -status)
+
+
+@unittest.skipUnless(os.environ.get("K10TEMP_VIRT_KERNEL_TESTS") == "1",
+                     "requires the disposable test VM")
+class ModuleParameterTests(unittest.TestCase):
+    def setUp(self):
+        subprocess.run(["rmmod", "k10temp_virt"], check=True)
+
+    def tearDown(self):
+        if Path("/sys/module/k10temp_virt").exists():
+            subprocess.run(["rmmod", "k10temp_virt"], check=True)
+        subprocess.run(["insmod", "/k10temp_virt.ko", "cache_ms=500", "timeout_ms=250",
+                        "labels=Host_CPU,Second"], check=True)
+
+    def test_invalid_names_fail_without_leaving_a_device(self):
+        for name in ("", "host-temp", "host*temp", "host temp", "host\ttemp", "host\ntemp",
+                     "host\rtemp", "host\vtemp", "host\ftemp"):
+            with self.subTest(name=name):
+                result = subprocess.run(["insmod", "/k10temp_virt.ko", f'sensor_name="{name}"'],
+                                        capture_output=True, text=True)
+                try:
+                    self.assertNotEqual(result.returncode, 0, "invalid name was accepted")
+                    self.assertFalse(Path("/dev/k10temp-virt").exists())
+                finally:
+                    if Path("/sys/module/k10temp_virt").exists():
+                        subprocess.run(["rmmod", "k10temp_virt"], check=True)
+
+    def test_valid_custom_name_loads(self):
+        subprocess.run(["insmod", "/k10temp_virt.ko", "sensor_name=host_temp1"], check=True)
+        names = [p.read_text().strip() for p in Path("/sys/class/hwmon").glob("hwmon*/name")]
+        self.assertIn("host_temp1", names)
 
 
 if __name__ == "__main__":
