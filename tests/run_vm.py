@@ -55,6 +55,8 @@ def main():
         copy(project / "k10temp_virt.ko", "/k10temp_virt.ko")
         copy(project / "k10temp_virt.py", "/project/k10temp_virt.py")
         for test in (project / "tests").glob("test_*.py"):
+            if test.name == "test_install.py":
+                continue  # Installer fixtures run via make test, outside the initramfs.
             copy(test, "/project/tests/" + test.name)
         for directory in ("proc", "sys", "dev", "tmp", "run"):
             (root / directory).mkdir(exist_ok=True)

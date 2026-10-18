@@ -53,6 +53,63 @@ for a typical one- or two-channel setup, and restart Resources after setup becau
 it caches its sensor discovery. A neutral name such as `hosttemp` can be used
 when automatic CPU classification is not wanted.
 
+## Install with the scripts
+
+Run each script from a copy of this project on the appropriate machine. The
+installers need Python 3.9+ and systemd. The guest also needs DKMS, a compiler,
+make, and headers for its running kernel. They check prerequisites without
+installing distribution packages automatically.
+
+In the **guest**:
+
+```sh
+sudo ./install-guest.sh --dry-run
+sudo ./install-guest.sh
+```
+
+This installs the module through DKMS, the bridge, its default modprobe options,
+and its systemd service. Existing modprobe options are preserved. If the virtio
+port already exists, it starts/restarts the service; otherwise the service is
+enabled for the next boot. Repeat installs skip an unchanged DKMS build. Updated
+sources force a rebuild; an already-loaded module stays loaded until reboot.
+Secure Boot key enrollment, if required by your guest, follows your distribution's
+normal DKMS procedure.
+
+On the **Proxmox host**, choose a source and replace `101` with your VM ID:
+
+```sh
+python3 k10temp_virt.py list
+sudo ./install-host.sh --vmid 101 --sensor k10temp:Tctl --dry-run
+sudo ./install-host.sh --vmid 101 --sensor k10temp:Tctl
+```
+
+The host installer verifies the selected sensor, installs the bridge and service,
+and uses `qm set` to add the dedicated channel. Existing QEMU arguments, including
+pending arguments, are preserved. A configuration digest guards against concurrent
+VM edits. A complete existing channel is reused; partial, duplicate, or customized
+channels are rejected for manual reconciliation. Full VM configuration backups
+are saved under `/var/backups/k10temp-virt/`; changed installed files get adjacent
+`.bak.*` copies. The VM is never stopped or started by the installer.
+
+Repeat `--sensor` for additional channels and configure matching guest labels as
+described below. On subsequent host installs, omit `--sensor` to preserve the
+existing sensor configuration. Only the selected VM's host service is restarted.
+Both installers stop on errors; any completed changes and their backups remain
+in place so you can correct the error and rerun them.
+
+To activate a newly added channel, use a Proxmox console or another machine:
+
+```sh
+qm shutdown 101 --timeout 120
+qm status 101   # confirm stopped before continuing
+qm start 101
+```
+
+This disconnects sessions in that guest. A reboot within the guest does not
+recreate the QEMU command line. After it starts, check `/usr/bin/sensors` and
+`systemctl status k10temp-virt-guest` in the guest, then restart Resources.
+The manual setup sections below explain the individual steps.
+
 ## Build and check
 
 In the guest, with a compiler, make, and matching kernel headers installed:
@@ -63,8 +120,8 @@ make test
 ```
 
 `make` builds `k10temp_virt.ko` with extra compiler warnings. `make test` runs
-unprivileged transport/source tests; kernel tests are skipped outside the
-disposable VM. To target another installed kernel:
+unprivileged transport/source and installer fixture tests; kernel tests are
+skipped outside the disposable VM. To target another installed kernel:
 
 ```sh
 make KDIR=/lib/modules/KERNEL_VERSION/build
@@ -90,6 +147,10 @@ Validated on Linux `7.0.0-38-generic`, Python 3.14.4, and QEMU 10.2.1:
 10 userspace tests, 8 actual-module tests, and 2 full virtio-serial/lm-sensors
 tests passed. The kernel sources also passed `checkpatch` without warnings.
 Other kernel versions and a live Proxmox installation have not been tested yet.
+
+The installers have 15 additional fixture tests covering configuration preservation,
+repeat runs, dry runs, failures, and channel conflicts. The host installer was
+also dry-run against Proxmox VE 9.2.3; this did not install services or change a VM.
 
 ## Set up the host
 
@@ -262,7 +323,8 @@ format is a small project-specific protocol, not a standard VirtIO sensor device
 To remove the guest installation, stop/disable its service, unload
 `k10temp_virt`, and run `dkms remove -m k10temp-virt -v 0.1.0 --all`. Remove its
 service, modprobe configuration, `/usr/src/k10temp-virt-0.1.0`, and installed
-`/usr/local/libexec/k10temp-virt` if unused. On the host, stop/disable the
+`/usr/local/libexec/k10temp-virt` if unused. The guest installer's build records
+under `/var/lib/k10temp-virt/` can also be removed. On the host, stop/disable the
 corresponding service, remove its configuration and only this project's QEMU
 arguments, then fully stop/start the VM. Run `systemctl daemon-reload` after
 removing unit files.
@@ -277,4 +339,5 @@ Linux syscall exception, like kernel UAPI headers. See [COPYING](COPYING),
 - [Linux hwmon sysfs interface](https://docs.kernel.org/hwmon/sysfs-interface.html)
 - [QEMU character devices](https://www.qemu.org/docs/master/system/invocation.html#character-device-options)
 - [Proxmox VM configuration](https://pve.proxmox.com/pve-docs/qm.conf.5.html)
+- [Proxmox qm commands](https://pve.proxmox.com/pve-docs/qm.1.html)
 - [Resources 1.10.2 CPU sensor selection](https://github.com/nokyan/resources/blob/v1.10.2/src/utils/cpu.rs)
