@@ -12,6 +12,12 @@ host. The readings describe the physical hardware shared by your VMs.
 Proxmox VE is the supported deployment target. The host installation and removal
 scripts use Proxmox's VM management tools.
 
+Resources inside a Proxmox VM, before and after setup:
+
+| Before: temperature unavailable | After: temperature and history visible |
+| :---: | :---: |
+| ![Resources showing CPU Temperature N/A](docs/images/resources-before.png) | ![Resources showing a CPU temperature of 57°C and a temperature history graph](docs/images/resources-after.png) |
+
 ## Requirements
 
 - A Proxmox VE host and a Linux guest.
