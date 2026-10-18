@@ -23,7 +23,7 @@ Resources inside a Proxmox VM, before and after setup:
 - A Proxmox VE host and a Linux guest.
 - Administrator access to both machines.
 - Python 3.9 or newer and systemd on both machines.
-- curl or wget, and tar, on both machines.
+- curl and tar on both machines.
 - `lm-sensors` in the guest for the `sensors` command.
 - DKMS, a C compiler, make, and matching kernel headers in the guest.
 - A working temperature sensor on the host.
@@ -37,25 +37,14 @@ The **host** is the physical computer running Proxmox. The **guest** is the
 virtual machine where you want to see temperatures. These examples use VM
 **101**; replace it with your VM's ID.
 
-### 1. Download the release on both machines
+### 1. Download the release on the host
 
-Run on the host and again in the guest. With curl:
+On the **Proxmox host**, run as root:
 
 ```sh
+cd ~
 curl -fL -o hwmon-virt-0.1.0.tar.gz \
   https://github.com/wmeddie/hwmon-virt/releases/download/v0.1.0/hwmon-virt-0.1.0.tar.gz
-```
-
-Or with wget:
-
-```sh
-wget -O hwmon-virt-0.1.0.tar.gz \
-  https://github.com/wmeddie/hwmon-virt/releases/download/v0.1.0/hwmon-virt-0.1.0.tar.gz
-```
-
-Then extract the archive and enter its directory:
-
-```sh
 tar -xzf hwmon-virt-0.1.0.tar.gz
 cd hwmon-virt-0.1.0
 ```
@@ -64,8 +53,7 @@ The [release page](https://github.com/wmeddie/hwmon-virt/releases) includes sour
 archives and SHA-256 checksums. The guest installer builds the driver for your
 running kernel.
 
-Run the following commands from that directory. Host installation commands
-should run as root; guest installation commands use `sudo`.
+Continue with the host setup from that directory.
 
 ### 2. Choose a sensor on the host
 
@@ -87,7 +75,15 @@ service. To share more than one sensor, see [additional sensors](docs/manual-ins
 
 ### 3. Install in the guest
 
+Open a terminal **inside the Linux guest VM**, then download and install the
+release there:
+
 ```sh
+cd ~
+curl -fL -o hwmon-virt-0.1.0.tar.gz \
+  https://github.com/wmeddie/hwmon-virt/releases/download/v0.1.0/hwmon-virt-0.1.0.tar.gz
+tar -xzf hwmon-virt-0.1.0.tar.gz
+cd hwmon-virt-0.1.0
 sudo ./install-guest.sh
 ```
 
@@ -122,7 +118,7 @@ check its display. If Resources was already open and still shows N/A, restart it
 ## Upgrading
 
 Download and extract the new release on **both machines** using the
-[download steps above](#1-download-the-release-on-both-machines). Run the
+[download commands above](#1-download-the-release-on-the-host). Run the
 following commands from the newly extracted directory. Installed configuration
 is kept separately from the downloaded files.
 
