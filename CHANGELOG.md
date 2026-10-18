@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.1.0 — 2026-10-19
 
-Initial release candidate, version `0.1.0`:
+Initial release:
 
 - Pull-based host temperature forwarding over a persistent virtio-serial channel.
 - Native guest hwmon device with 1–16 temperature channels and a configurable
@@ -15,3 +15,4 @@ Initial release candidate, version `0.1.0`:
 - Protocol error filtering, sensor-name validation, and timeout-boundary handling.
 - Userspace, installer/uninstaller, real DKMS, and disposable QEMU regression tests.
 - Upgrade documentation and `--version` reporting.
+- Downloadable source archive and checksums, with curl and wget installation instructions.

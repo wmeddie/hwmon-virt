@@ -30,6 +30,10 @@ Update versioned manual-install/removal examples and the changelog at the same
 time. Each published release gets a new version and a matching `vX.Y.Z` tag.
 Leave release notes under **Unreleased** until the release is actually published.
 
+Publish a source archive named `hwmon-virt-X.Y.Z.tar.gz`, containing a top-level
+`hwmon-virt-X.Y.Z/` directory, and a `SHA256SUMS` file. Build the archive from the
+release commit and update the README's download URLs and directory names.
+
 Before tagging a release, check CI, record any compatibility limitations, and
 exercise the documented upgrade path. A local build result does not stand in
 for untested kernel or distribution combinations.
