@@ -1,0 +1,10 @@
+k10temp-virt is licensed under the GNU General Public License version 2
+only (GPL-2.0-only). See LICENSE for the full license text.
+
+Like the Linux kernel's userspace API headers, protocol.h carries the
+Linux-syscall-note exception. See LICENSES/exceptions/Linux-syscall-note.
+Ordinary applications reading this module's hwmon files are not required
+to adopt this project's license merely by using that interface.
+
+Individual source files carry SPDX license identifiers. Contributions are
+accepted under the license identified in the file being changed.

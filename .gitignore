@@ -1,0 +1,11 @@
+*.o
+*.ko
+*.mod
+*.mod.c
+*.cmd
+*.order
+*.symvers
+.tmp_versions/
+__pycache__/
+.ruff_cache/
+build/

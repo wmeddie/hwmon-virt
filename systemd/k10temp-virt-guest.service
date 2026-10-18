@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: GPL-2.0-only
+[Unit]
+Description=On-demand virtual temperature sensor bridge
+After=systemd-modules-load.service
+
+[Service]
+Type=simple
+ExecStartPre=/sbin/modprobe k10temp_virt
+ExecStart=/usr/local/libexec/k10temp-virt guest
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

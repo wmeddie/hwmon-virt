@@ -1,0 +1,3 @@
+{
+  "sensors": ["k10temp:Tctl"]
+}
